@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>量化交易看板</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --orange: #d29922;
+    --accent: #1f6feb;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    background: var(--bg); color: var(--text); padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px;
+  }
+  .header h1 { font-size: 22px; font-weight: 600; }
+  .header .time { color: var(--muted); font-size: 14px; }
+  .grid { display: grid; gap: 16px; margin-bottom: 24px; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-5 { grid-template-columns: repeat(5, 1fr); }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .card-header {
+    font-size: 12px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 8px;
+  }
+  .card-value {
+    font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .card-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .blue { color: var(--blue); }
+  .orange { color: var(--orange); }
+
+  .section-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+  .log-area {
+    background: #010409; border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; font-size: 12px;
+    max-height: 400px; overflow-y: auto; font-family: 'Cascadia Code', monospace;
+  }
+  .log-line {
+    padding: 2px 0; border-bottom: 1px solid rgba(48,54,61,0.3);
+    display: flex; gap: 8px;
+  }
+  .log-time { color: var(--muted); white-space: nowrap; min-width: 80px; }
+  .log-msg { white-space: pre-wrap; word-break: break-all; }
+
+  .pos-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .pos-table th { text-align: left; padding: 6px 8px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
+  .pos-table td { padding: 6px 8px; border-bottom: 1px solid rgba(48,54,61,0.3); }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tab {
+    padding: 6px 16px; border-radius: 6px; cursor: pointer;
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .stat-item {
+    text-align: center; padding: 8px; border-radius: 6px; border: 1px solid var(--border);
+  }
+  .stat-item .label { font-size: 11px; color: var(--muted); }
+  .stat-item .val { font-size: 18px; font-weight: 700; margin-top: 4px; }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 11px; font-weight: 600;
+  }
+  .badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-red { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-yellow { background: rgba(210,153,34,0.15); color: var(--orange); }
+
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot-green { background: var(--green); }
+  .dot-red { background: var(--red); }
+  .dot-yellow { background: var(--orange); }
+
+  @media (max-width: 900px) {
+    .grid-4, .grid-5 { grid-template-columns: repeat(2, 1fr); }
+    .grid-3 { grid-template-columns: 1fr; }
+    .stat-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .grid-4, .grid-5, .grid-3 { grid-template-columns: 1fr; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📊 量化交易看板</h1>
+  <span class="time" id="sysTime">加载中...</span>
+</div>
+
+<!-- 顶栏：余额 + 仓位状态 -->
+<div class="grid grid-3" id="topCards">
+  <div class="card">
+    <div class="card-header">💰 保证金余额</div>
+    <div class="card-value" id="balance">--</div>
+    <div class="card-sub" id="balanceTime"></div>
+  </div>
+  <div class="card">
+    <div class="card-header">📈 当前仓位</div>
+    <div class="card-value" id="positionSymbol" style="font-size:18px;">--</div>
+    <div class="card-sub" id="positionDetail"></div>
+  </div>
+  <div class="card">
+    <div class="card-header">⚡ 风控状态</div>
+    <div class="card-value" id="riskStatus" style="font-size:20px;">--</div>
+    <div class="card-sub" id="riskDetail"></div>
+  </div>
+</div>
+
+<!-- 中间统计行 -->
+<div class="section-title">📋 交易总览</div>
+<div class="grid grid-5" id="overviewCards">
+  <div class="card"> <div class="card-header">总交易</div> <div class="card-value" id="totalTrades">--</div> </div>
+  <div class="card"> <div class="card-header">胜率</div> <div class="card-value" id="winRate">--</div> <div class="card-sub" id="winLoss"></div> </div>
+  <div class="card"> <div class="card-header">总盈亏</div> <div class="card-value" id="totalPnl">--</div> </div>
+  <div class="card"> <div class="card-header">多/空比</div> <div class="card-value" id="longShortRatio">--</div> <div class="card-sub" id="longShortDetail"></div> </div>
+  <div class="card"> <div class="card-header">多/空盈亏</div> <div class="card-value" id="longShortPnl">--</div> <div class="card-sub" id="longShortPnlDetail"></div> </div>
+</div>
+
+<!-- 周期统计 -->
+<div class="section-title">⏱ 周期统计</div>
+<div class="tabs" id="periodTabs">
+  <div class="tab active" data-period="1h">1h</div>
+  <div class="tab" data-period="3h">3h</div>
+  <div class="tab" data-period="6h">6h</div>
+  <div class="tab" data-period="12h">12h</div>
+  <div class="tab" data-period="24h">24h</div>
+</div>
+<div id="periodStats"></div>
+
+<!-- 仓位详情 -->
+<div class="section-title" style="margin-top: 16px;">🔍 仓位详情</div>
+<div class="card" id="positionCard">
+  <table class="pos-table">
+    <thead><tr><th>字段</th><th>值</th></tr></thead>
+    <tbody id="positionTable"></tbody>
+  </table>
+</div>
+
+<!-- 日志 -->
+<div class="section-title" style="margin-top: 16px;">📝 运行日志</div>
+<div class="tabs" id="logTabs">
+  <div class="tab active" data-log="200">最近 200 条</div>
+  <div class="tab" data-log="100">最近 100 条</div>
+  <div class="tab" data-log="50">最近 50 条</div>
+</div>
+<div class="log-area" id="logArea"><div style="color:var(--muted)">加载中...</div></div>
+
+<script>
+// ==================== 数据加载 ====================
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url);
+    return await r.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+// 更新时间
+function updateTime() {
+  const now = new Date();
+  document.getElementById('sysTime').textContent =
+    now.toLocaleString('zh-CN', { hour12: false });
+}
+
+function fmt(num, dec = 2) {
+  if (num === null || num === undefined) return '--';
+  return Number(num).toFixed(dec);
+}
+
+function pnlClass(val) {
+  if (!val || val === 0) return '';
+  return val > 0 ? 'green' : 'red';
+}
+
+function pnlText(val) {
+  if (val === null || val === undefined) return '--';
+  const n = Number(val);
+  const s = n > 0 ? '+' : '';
+  return `<span class="${pnlClass(n)}">${s}${fmt(n)}</span>`;
+}
+
+// 加载余额
+async function loadBalance() {
+  const data = await fetchJSON('/api/balance');
+  const el = document.getElementById('balance');
+  const subEl = document.getElementById('balanceTime');
+  if (data.error) {
+    el.textContent = '-- USDT';
+    el.className = 'card-value orange';
+    subEl.textContent = '⚠ ' + data.error;
+  } else {
+    el.innerHTML = `${fmt(data.wallet)} <span style="font-size:14px;color:var(--muted)">USDT</span>`;
+    el.className = 'card-value blue';
+    subEl.textContent = `可用: ${fmt(data.available)} USDT`;
+  }
+}
+
+// 加载仓位
+async function loadPosition() {
+  const data = await fetchJSON('/api/position');
+  const symEl = document.getElementById('positionSymbol');
+  const detEl = document.getElementById('positionDetail');
+  const riskEl = document.getElementById('riskStatus');
+  const riskDet = document.getElementById('riskDetail');
+  const posTbody = document.getElementById('positionTable');
+
+  if (data.has_position) {
+    const p = data.position;
+    const r = data.risk;
+    const pnl = p.unrealized_pnl || 0;
+    symEl.textContent = `${data.symbol}`;
+    symEl.className = 'card-value green';
+    detEl.innerHTML = `开仓价: ${fmt(p.entry_price)} | 数量: ${fmt(p.amount)} | 浮盈: ${pnlText(pnl)}`;
+
+    // 风控状态
+    let statusText = '运行中';
+    let statusClass = 'green';
+    if (r.cooling) { statusText = '冷却中'; statusClass = 'yellow'; }
+    if (r.tp_done) { statusText = '已保本'; statusClass = 'blue'; }
+    riskEl.textContent = statusText;
+    riskEl.className = `card-value ${statusClass}`;
+
+    riskDet.innerHTML = `浮盈: ${pnlText(pnl)} USDT | 保证⾦: ${fmt(r.current_margin)}`;
+
+    // 仓位详情表
+    posTbody.innerHTML = `
+      <tr><td>交易对</td><td>${data.symbol}</td></tr>
+      <tr><td>开仓价</td><td>${fmt(p.entry_price)}</td></tr>
+      <tr><td>标记价</td><td>${fmt(p.mark_price)}</td></tr>
+      <tr><td>数量</td><td>${fmt(p.amount, 4)}</td></tr>
+      <tr><td>未实现盈亏</td><td class="${pnlClass(pnl)}">${pnl > 0 ? '+' : ''}${fmt(pnl)} USDT</td></tr>
+      <tr><td>初始保证金</td><td>${fmt(r.original_margin)}</td></tr>
+      <tr><td>当前保证金</td><td>${fmt(r.current_margin)}</td></tr>
+      <tr><td>首轮止盈保本</td><td>${r.tp_done ? '✅ 已保本' : '⏳ 未触发'}</td></tr>
+      <tr><td>冷却状态</td><td>${r.cooling ? '🔴 冷却中' : '🟢 正常'}</td></tr>
+    `;
+  } else {
+    symEl.textContent = '空仓';
+    symEl.className = 'card-value muted';
+    detEl.textContent = '当前无持仓';
+    riskEl.textContent = '无仓位';
+    riskEl.className = 'card-value';
+    riskDet.textContent = '';
+    posTbody.innerHTML = '<tr><td colspan="2" style="color:var(--muted);text-align:center;">无持仓</td></tr>';
+  }
+}
+
+// 加载总览统计
+async function loadOverview() {
+  const data = await fetchJSON('/api/summary');
+  if (!data.total_trades) return;
+  document.getElementById('totalTrades').textContent = data.total_trades;
+  document.getElementById('winRate').textContent = data.win_rate + '%';
+  document.getElementById('winLoss').textContent = `${data.win}胜 ${data.loss}负`;
+  document.getElementById('totalPnl').innerHTML = pnlText(data.total_pnl) + ' USDT';
+  document.getElementById('longShortRatio').textContent = data.long_short_ratio;
+  document.getElementById('longShortDetail').textContent = `${data.long_count}多 / ${data.short_count}空`;
+  document.getElementById('longShortPnl').innerHTML = `${pnlText(data.long_pnl)} / ${pnlText(data.short_pnl)}`;
+  document.getElementById('longShortPnlDetail').textContent = '多/空';
+}
+
+// 加载周期统计
+async function loadPeriodStats(period = '1h') {
+  const data = await fetchJSON('/api/stats');
+  const el = document.getElementById('periodStats');
+  const p = data[period];
+  if (!p || p.error) {
+    el.innerHTML = '<div style="color:var(--muted)">暂无数据</div>';
+    return;
+  }
+  let html = '<div class="stat-grid">';
+  html += `<div class="stat-item"><div class="label">交易数</div><div class="val">${p.total_trades || 0}</div></div>`;
+  html += `<div class="stat-item"><div class="label">胜率</div><div class="val ${pnlClass(p.win_rate)}">${fmt(p.win_rate, 1)}%</div></div>`;
+  html += `<div class="stat-item"><div class="label">总盈亏</div><div class="val ${pnlClass(p.total_pnl)}">${p.total_pnl > 0 ? '+' : ''}${fmt(p.total_pnl)}</div></div>`;
+  html += `<div class="stat-item"><div class="label">做多</div><div class="val green">${p.long_count || 0}次</div></div>`;
+  html += `<div class="stat-item"><div class="label">做空</div><div class="val red">${p.short_count || 0}次</div></div>`;
+  html += '</div>';
+
+  // 按原因统计
+  if (p.by_reason && p.by_reason.length > 0) {
+    html += '<div style="margin-top: 12px; font-size: 13px; color: var(--muted);">按原因:</div>';
+    html += '<table class="pos-table"><thead><tr><th>原因</th><th>次数</th><th>盈亏</th><th>胜率</th></tr></thead><tbody>';
+    for (const r of p.by_reason) {
+      html += `<tr><td>${r.label || r.reason}</td><td>${r.count}</td><td class="${pnlClass(r.pnl)}">${r.pnl > 0 ? '+' : ''}${fmt(r.pnl)}</td><td>${r.win_rate}%</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  el.innerHTML = html;
+}
+
+// 加载日志
+async function loadLogs(limit = 200) {
+  const data = await fetchJSON(`/api/logs?t=${Date.now()}`);
+  const el = document.getElementById('logArea');
+  if (!data.logs || data.logs.length === 0) {
+    el.innerHTML = '<div style="color:var(--muted)">暂无日志</div>';
+    return;
+  }
+  const logs = data.logs.slice(-limit);
+  el.innerHTML = logs.map(l => {
+    let cls = '';
+    if (l.message.includes('错误') || l.message.includes('异常')) cls = ' style="color:var(--red)"';
+    else if (l.message.includes('止损') || l.message.includes('平仓')) cls = ' style="color:var(--orange)"';
+    else if (l.message.includes('开仓') || l.message.includes('买入')) cls = ' style="color:var(--green)"';
+    return `<div class="log-line"><span class="log-time">${l.time || ''}</span><span class="log-msg"${cls}>${l.message}</span></div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+// ==================== 事件绑定 ====================
+document.getElementById('periodTabs').addEventListener('click', e => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  document.querySelectorAll('#periodTabs .tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  loadPeriodStats(tab.dataset.period);
+});
+
+document.getElementById('logTabs').addEventListener('click', e => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  document.querySelectorAll('#logTabs .tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  loadLogs(parseInt(tab.dataset.log));
+});
+
+// ==================== 轮询 ====================
+function refreshAll() {
+  updateTime();
+  loadBalance();
+  loadPosition();
+  loadOverview();
+  loadPeriodStats(document.querySelector('#periodTabs .tab.active')?.dataset?.period || '1h');
+  loadLogs(parseInt(document.querySelector('#logTabs .tab.active')?.dataset?.log || '200'));
+}
+
+// 每 5 秒刷新
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data & runtime
+data/
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+
+# Config & secrets
+config.py
+.env
+*.key
+cert*.pem
+
+# Chrome
+chrome-debug/
+
+# Temp
+__temp_skills/
+__pycache__/
+
+# OS
+Thumbs.db
+.DS_Store
