@@ -22,8 +22,8 @@ if os.path.exists(db_path):
 else:
     print(f"  [跳过] {db_path} 不存在")
 
-# 2. 删除缓存文件
-for name in ("risk_state.json", "summary_sent_state.json", "square_feeds.json"):
+# 2. 删除缓存文件（旧格式已迁移到 SQLite，但仍保留兼容删除）
+for name in ("fast_trade_state.json", "summary_sent_state.json", "square_feeds.json"):
     f = os.path.join(DATA_DIR, name)
     if os.path.exists(f):
         try:

@@ -11,16 +11,12 @@
   - K线趋势过滤：做多仅trend=up，做空仅trend=down
   - 大亏损长冷却：单笔止损>20U时，冷却延长至60分钟
 """
-import json
-import os
 import time
 from datetime import datetime
 from core.queries import check_balance, get_current_price
 from core.order import place_market_order, set_leverage, close_position
 from utils.trade.records import record_open, record_close
-
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
-STATE_FILE = os.path.join(DATA_DIR, "fast_trade_state.json")
+from utils.state import load_fast_state, save_fast_state
 
 FAST_LEVERAGE = 5
 FAST_MARGIN_RATIO = 0.10       # 10% 余额（方案B：仓位翻倍，爆仓距离不变）
@@ -39,38 +35,13 @@ FAST_HEAVY_COOLING_SEC = 3600   # 大亏损冷却60分钟
 
 
 def _load_state() -> dict:
-    """加载快捞状态，自动迁移旧格式（单仓位→多仓位）"""
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # 旧格式迁移
-            if "symbol" in data and "positions" not in data:
-                pos = {}
-                sym = data.pop("symbol", None)
-                if sym:
-                    pos[sym] = {
-                        "entry_price": data.pop("entry_price", 0),
-                        "side": data.pop("side", "LONG"),
-                        "qty": data.pop("qty", 0),
-                        "margin": data.pop("margin", 0),
-                        "open_time": data.pop("open_time", ""),
-                        "closed": data.pop("closed", True),
-                        "profit_floor": data.pop("profit_floor", 0.0),
-                        "highest_profit_pct": data.pop("highest_profit_pct", 0.0),
-                    }
-                data["positions"] = pos
-                _save_state(data)
-            return data
-        except Exception:
-            pass
-    return {"positions": {}, "cooling": {}}
+    """加载快捞状态（含 JSON→SQLite 自动迁移）"""
+    return load_fast_state()
 
 
 def _save_state(state: dict):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False)
+    """原子保存快捞状态"""
+    save_fast_state(state)
 
 
 def _has_position(state: dict, symbol: str = None) -> bool:

@@ -96,21 +96,18 @@ def api_position():
             })
 
         # 合并快捞状态信息（锁仓线等）
-        fast_state = _read_json("fast_trade_state.json")
+        from utils.state import load_fast_state
+        fast_state = load_fast_state()
         fast_positions = {}
-        if isinstance(fast_state, dict):
-            pos_dict = fast_state.get("positions", {})
-            if not pos_dict and "symbol" in fast_state:
-                # 旧格式迁移
-                pos_dict = {fast_state["symbol"]: fast_state}
-            for sym, data in pos_dict.items():
-                if data.get("closed"):
-                    continue
-                fast_positions[sym] = {
-                    "profit_floor": data.get("profit_floor", 0),
-                    "highest_profit_pct": data.get("highest_profit_pct", 0),
-                    "entry_price": data.get("entry_price", 0),
-                }
+        pos_dict = fast_state.get("positions", {})
+        for sym, data in pos_dict.items():
+            if data.get("closed"):
+                continue
+            fast_positions[sym] = {
+                "profit_floor": data.get("profit_floor", 0),
+                "highest_profit_pct": data.get("highest_profit_pct", 0),
+                "entry_price": data.get("entry_price", 0),
+            }
 
         # 合并数据
         for pos in positions:
