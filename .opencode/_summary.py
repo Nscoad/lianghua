@@ -1,6 +1,7 @@
-from utils.trade_stats import calc_period_stats
-from utils.trade_analysis import ANALYSIS_FILE
-import json, os
+from utils.trade.stats import calc_period_stats
+from utils.trade.analysis import ANALYSIS_FILE
+import json
+import os
 
 for h in [1, 3, 6]:
     stats = calc_period_stats(h)

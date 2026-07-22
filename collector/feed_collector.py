@@ -2,7 +2,7 @@
 采集层 — 收集广场动态并存入 JSON
 """
 from collector.square import get_square_following_feed, ensure_chrome_debug
-from utils.data_manager import add_new_feeds, load_feeds
+from collector.feeds_db import add_new_feeds, load_feeds
 
 
 def collect_and_store(max_items: int = 10, skip_chrome_check: bool = False) -> dict:

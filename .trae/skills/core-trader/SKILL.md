@@ -3,36 +3,49 @@ name: "core-trader"
 description: "行动层 — 封装币安U本位合约API（查余额、下单、持仓、杠杆、止损单）。当用户需要执行买卖、查持仓、查余额、设杠杆、设服务器止损等具体合约操作时调用。"
 ---
 
-# 行动层 — core/trader.py
+# 行动层 — core/
 
 ## 概述
 
-币安 U本位合约 API 的执行封装，所有合约操作的最底层。所有上层模块（策略层、调度器）都依赖此模块与币安交互。
+币安 U本位合约 API 的三层封装，所有合约操作的最底层。分三个文件：
 
-内置自动时间同步（处理 -1021 错误）：API 报错时自动调用 `w32tm /resync` 并重建客户端。
+1. **`client.py`** — 客户端管理 + 时间同步 + API限流 + 错误处理
+2. **`queries.py`** — 查询层：余额/价格/持仓/成交明细/币种限制
+3. **`order.py`** — 执行层：下单/平仓/止损（含分批拆单）
 
-内置**全局 API 速率限制**（`_rate_limit()`）：相邻两次 API 调用至少间隔 200ms，避免触发交易所限频。
-
-内置**5秒缓存**：`get_current_price()` 和 `get_position()` 在 5 秒内返回缓存结果，减少重复 API 调用。
+内置自动时间同步（处理 -1021 错误）；**全局 API 速率限制**（相邻调用间隔 ≥ 200ms）；**5秒缓存**（价格和持仓查询）。
 
 ## 文件位置
 
-`core/trader.py`
-
-## 导出函数
+### client.py
 
 | 函数 | 说明 | 返回值 |
 |------|------|--------|
 | `get_client()` | 初始化 API 客户端（带配置） | client 实例 |
+| `_rate_limit()` | 全局限流：相邻API调用至少200ms | `None` |
+| `_handle_api_error(e, context)` | 时间戳错误(-1021)自动同步+重建客户端 | `True/None` |
+| `_sync_system_time()` | 校准本地时间偏移 | `bool` |
+
+### queries.py
+
+| 函数 | 说明 | 返回值 |
+|------|------|--------|
 | `check_balance()` | 查询 USDT 可用余额 | `float` |
 | `check_all_balances()` | 打印全币种余额详情（含未实现盈亏） | `None` |
+| `get_current_price(symbol)` | 获取合约最新价格（**5秒缓存**） | `float` 或 `None` |
+| `get_fills_agg(symbol, order_id)` | 查询某笔订单的真实成交明细 | `dict{qty, avg_price, commission, realized_pnl}` |
+| `get_position(symbol)` | 查询持仓信息（**5秒缓存**） | `dict` 或 `None` |
+| `has_open_position()` | 检查是否有任何币种持仓 | `bool` |
+| `_get_symbol_limits(symbol)` | 获取币种交易限制参数 | `dict` |
+
+### order.py
+
+| 函数 | 说明 | 返回值 |
+|------|------|--------|
 | `set_leverage(symbol, leverage)` | 设置合约杠杆倍数 | `data` 或 `None` |
-| `get_current_price(symbol)` | 获取合约最新价格（**5秒缓存**，缓存命中时跳过 API 调用） | `float` 或 `None` |
-| `place_market_order(symbol, side, quantity)` | 发送市价单，下单后自动查 trade_list 获取真实成交数据。失败时自动调 AI 分析原因（analyze_order_error） | `(order_data, fills_agg)` |
-| `get_fills_agg(symbol, order_id)` | 查询某笔订单的真实成交明细（累计数量、加权均价、手续费、已实现盈亏），重试3次 | `dict{qty, avg_price, commission, realized_pnl}` |
-| `place_stop_loss_order(symbol, side, quantity, entry_price, stop_loss_ratio=0.30)` | 设置服务器端止损单（STOP_MARKET），即使程序崩溃也生效 | `dict` 或 `None` |
-| `close_position(symbol)` | 平掉指定交易对全部仓位，返回真实成交数据。失败时自动调 AI 分析原因 | `(order_data, fills_agg)` |
-| `get_position(symbol)` | 查询持仓信息（含 entry_price, position_amt, mark_price, un_realized_profit；**5秒缓存**） | `dict` 或 `None` |
+| `place_market_order(symbol, side, quantity)` | 发送市价单，失败自动调 AI 分析 | `(order_data, fills_agg)` |
+| `place_stop_loss_order(symbol, side, quantity, entry_price, stop_loss_ratio=0.30)` | 设置服务器端止损单（STOP_MARKET） | `dict` 或 `None` |
+| `close_position(symbol)` | 平仓（含分批+减量重试），失败调 AI 分析 | `(order_data, fills_agg)` |
 
 ## 配置依赖
 
@@ -41,7 +54,8 @@ description: "行动层 — 封装币安U本位合约API（查余额、下单、
 ## 典型使用场景
 
 ```python
-from core.trader import check_balance, get_current_price, place_market_order, get_position, place_stop_loss_order, get_fills_agg
+from core.queries import check_balance, get_current_price, get_position, get_fills_agg
+from core.order import place_market_order, place_stop_loss_order, close_position
 
 # 查余额
 balance = check_balance()
@@ -74,7 +88,7 @@ fills = get_fills_agg("BANKUSDT", order_id=123456)
 - 所有订单为市价单（MARKET），无限价单功能
 - 采用单向持仓模式（One-way Mode）
 - 数量按整数步长计算（合约要求）
-- 时间戳错误（-1021）自动恢复：`w32tm /resync` + 重建客户端
+- 时间戳错误（-1021）自动恢复
 - 测试网可能不支持 `STOP_MARKET`，会优雅降级提示
-- 全局 API 速率限制（`_rate_limit()`）：所有 API 调用相邻间隔至少 200ms
-- **5秒缓存**：`get_current_price()` 和 `get_position()` 使用内存缓存，5 秒内重复调用不发起 API 请求
+- 全局 API 速率限制：所有 API 调用相邻间隔至少 200ms
+- **5秒缓存**：`get_current_price()` 和 `get_position()` 使用内存缓存

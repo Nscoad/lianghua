@@ -36,8 +36,8 @@ https://xxxx.trycloudflare.com — 外网穿透（每次重启变化）
 | 数据 | 来源 |
 |------|------|
 | 保证金余额 | 币安 API `check_balance()` |
-| 当前仓位 | 币安 API `get_position()` + `risk_state.json` |
-| 风控状态 | `risk_state.json`（TP1/冷却） |
+| 当前仓位 | 币安 API `get_position()` + `fast_trade_state.json` |
+| 风控状态 | `fast_trade_state.json`（锁仓线/冷却） |
 | 交易总览 | `trading.db trade_records`（胜率/多空比/总盈亏） |
 | 周期统计 | `calc_period_stats(1h/3h/6h/12h/24h)` |
 | 运行日志 | `trading.db run_log`（最近 200 条） |

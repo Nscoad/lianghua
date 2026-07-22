@@ -18,22 +18,18 @@ def record_close(symbol: str, reason: str, realized_pnl: float, qty: float,
     insert_trade_record(record)
     tag = "盈利" if realized_pnl >= 0 else "亏损"
     fee_str = f" (手续费 {fee:.4f})" if fee > 0 else ""
-    print(f"\n[流水] {tag} {symbol} {reason} {realized_pnl:+.2f} USDT{fee_str}{' (部分减仓)' if is_partial else ''}")
+    print(f"[交易流水] {symbol} {side} {tag} {realized_pnl:+.2f} USDT{fee_str}")
 
 
-def record_open(symbol: str, side: str, qty: float, price: float, fee: float = 0.0, order_id: int = 0):
+def record_open(symbol: str, side: str, qty: float, price: float,
+                fee: float = 0.0, order_id: int = 0):
     record = {
         "time": datetime.now().isoformat(), "symbol": symbol, "side": side,
-        "reason": "open", "realized_pnl": 0.0, "fee": round(fee, 4),
-        "net_pnl": round(-fee, 2), "qty": qty,
-        "entry_price": round(price, 8), "exit_price": 0.0, "is_partial": False,
+        "reason": "open", "realized_pnl": 0.0,
+        "fee": round(fee, 4), "net_pnl": round(-fee, 2),
+        "qty": qty, "entry_price": round(price, 8),
+        "exit_price": 0.0, "is_partial": False,
     }
     if order_id:
         record["order_id"] = order_id
     insert_trade_record(record)
-    print(f"\n[开仓] {symbol} {side} {qty} @ {price} (手续费 {fee:.4f})")
-
-
-def get_trade_records(limit: int = 50) -> list[dict]:
-    from utils.db import get_trade_records as db_get
-    return db_get(limit)

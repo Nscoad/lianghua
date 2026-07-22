@@ -1,5 +1,4 @@
 """日志 — 写 trading.db.run_log"""
-import sys
 import builtins
 import time
 from datetime import datetime

@@ -10,7 +10,7 @@
 from datetime import datetime
 from collector.square import get_square_trending_feed
 from collector.x_collector import get_x_feed
-from utils.data_manager import add_new_feeds
+from collector.feeds_db import add_new_feeds
 
 
 def collect_trends(max_items_per_source: int = 10) -> dict:

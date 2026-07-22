@@ -11,7 +11,7 @@ BALANCE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", 
 
 def _get_balance_info() -> dict:
     """获取期初余额和当前余额"""
-    from core.trader import check_balance
+    from core.queries import check_balance
     current = check_balance() or 0
 
     prev = None

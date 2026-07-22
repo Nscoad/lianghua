@@ -9,8 +9,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # ==================== Chrome 路径配置 ====================
 CHROME_PORT = 9555
@@ -26,7 +24,7 @@ def _is_port_open(port: int) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1)
             return s.connect_ex(("127.0.0.1", port)) == 0
-    except:
+    except Exception:
         return False
 
 
@@ -42,7 +40,7 @@ def ensure_chrome_debug() -> bool:
         print(f"[OK] Chrome 调试模式已运行 (端口 {CHROME_PORT})")
         return True
 
-    print(f"[启动] Chrome 调试模式未启动，正在自动启动...")
+    print("[启动] Chrome 调试模式未启动，正在自动启动...")
 
     if not os.path.isfile(CHROME_PATH):
         print(f"[错误] 未找到 Chrome: {CHROME_PATH}")

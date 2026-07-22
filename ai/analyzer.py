@@ -1,146 +1,13 @@
 """
-AI 决策层 — 对接 DeepSeek API，分析广场动态并生成交易信号
+AI 决策层 — 对接 DeepSeek API
+  - analyze_order_error: 下单失败后的错误诊断
+  - analyze_summary_stats: 周期复盘统计的AI分析
+  - run_feed_summary: 广场/X动态AI摘要，发微信通知
 """
 import json
-from utils.data_manager import get_unanalyzed_feeds, mark_feeds_analyzed, save_signal
-from utils.market_screener import format_movers_text, get_dynamic_candidates
+import re
+from datetime import datetime
 from config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL
-
-SYSTEM_PROMPT = """
-你是币安广场分析师。根据最新动态识别热门币种，输出JSON交易信号。
-
-输出格式：
-{"symbol":"币种名(带USDT)","sentiment":"bullish/bearish/neutral","confidence":0-100,"reason":"简要原因","action":"buy/sell/hold"}
-
-规则：
-- symbol = 讨论热度最高或涨跌榜中最有潜力的币种
-- bullish/buy = 多数看涨，情绪积极
-- bearish/sell = 多数看跌，恐慌
-- neutral/hold = 信息不足或多空均衡
-- 结合提供的市场数据（24h涨跌、成交量）和历史波动数据（7天趋势、ATR、主动买入比）综合判断
-- 历史和实时数据与情绪一致时提高confidence，矛盾时降低
-- 涨跌榜数据：涨幅榜情绪币容易继续涨，跌幅榜情绪币容易继续跌
-- K线阶段：刚启动的比已经涨了很久的更安全，超跌的可能反弹
-- 参考提供的近期交易记录和AI信号：同一币种连续亏损则降低confidence或换币
-- 同一方向的信号反复止损，说明该方向在当前市场环境下成功率低，应减少交易频率
-- K线趋势优先于社交情绪：币价实际走势比社交情绪更重要
-  - 币种K线趋势向上时（MA6>MA20），即使广场看空也不做空
-  - 币种K线趋势向下时（MA6<MA20），即使广场看多也不做多
-- 做空（sell）限制：仅当最近4小时K线趋势向下时才考虑做空，上涨趋势中不做空
-- 做多（buy）限制：仅当最近4小时K线趋势向上时才考虑做多，下跌趋势中不做多
-"""
-
-
-def analyze_with_deepseek(feeds_text: list[str], target_symbol: str = None,
-                          symbol_candidates: list = None, movers_text: str = "") -> dict | None:
-    """调用 DeepSeek API 分析动态文本，附带市场数据和历史波动数据"""
-    if not DEEPSEEK_API_KEY:
-        print("[错误] DEEPSEEK_API_KEY 未配置，跳过分析。")
-        return None
-
-    import requests
-
-    user_content = "以下是币安广场最新动态，请分析市场情绪并找出最热门的交易机会：\n\n"
-    for i, text in enumerate(feeds_text, 1):
-        # 截断长文本，每条最多150字，减少token消耗
-        text = text[:150] + ("..." if len(text) > 150 else "")
-        user_content += f"[动态 {i}] {text}\n"
-
-    # 涨跌榜数据（情绪币参考）
-    if movers_text:
-        user_content += f"\n{movers_text}\n"
-
-    # CoinMarketCap 全市场概况
-    try:
-        from utils.market_cap import format_market_summary
-        cmc_text = format_market_summary(top_n=10)
-        if cmc_text:
-            user_content += f"\n{cmc_text}\n"
-    except Exception:
-        pass
-
-    # ====== 历史交易数据 ======
-    try:
-        from utils.trade_records import get_trade_records
-        recent = get_trade_records(20)
-        if recent:
-            user_content += "\n===== 近期交易记录（最近20笔，供复盘参考）=====\n"
-            for r in recent[-10:]:
-                sym = r.get("symbol", "?")
-                side = r.get("side", "?")
-                pnl = r.get("net_pnl", r.get("realized_pnl", 0))
-                res = "[盈利]" if (pnl or 0) > 0 else "[亏损]"
-                user_content += f"  {res} {sym} {side} 盈亏:{pnl:+.2f} 原因:{r.get('reason','?')}\n"
-    except Exception:
-        pass
-
-    try:
-        from utils.data_manager import load_signals
-        signals = load_signals()
-        if signals:
-            user_content += "\n===== 近期AI信号（最近5个）=====\n"
-            for s in signals[-5:]:
-                user_content += f"  {s.get('symbol','?')} {s.get('action','?')} 信心:{s.get('confidence',0)}% 理由:{s.get('reason','')[:40]}\n"
-    except Exception:
-        pass
-
-    # 候选币种市场数据（前3个币种，用于AI对比分析）
-    if symbol_candidates:
-        for sym in symbol_candidates:
-            try:
-                from utils.market_data import format_light_market_data
-                market_info = format_light_market_data(sym)
-                user_content += f"\n===== {sym} =====\n"
-                if market_info:
-                    user_content += f"{market_info}\n"
-            except Exception as e:
-                user_content += f"\n({sym} 数据获取失败: {e})\n"
-
-    try:
-        resp = requests.post(
-            DEEPSEEK_API_URL,
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 300,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        content = result["choices"][0]["message"]["content"]
-
-        content = content.strip()
-
-        # 去掉 markdown 代码块包裹
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
-
-        # 修复AI输出中常见的JSON格式问题
-        import re as re_mod
-        # 数字后面多引号: "confidence":85" → "confidence":85
-        content = re_mod.sub(r':(\d+)"([,}])', r':\1\2', content)
-        # 数字被字符串化: "confidence":"85" → "confidence":85
-        content = re_mod.sub(r': "(\d+)"', r': \1', content)
-
-        return json.loads(content)
-
-    except Exception as e:
-        print(f"调用 DeepSeek API 失败: {e}")
-        return None
 
 
 def analyze_order_error(symbol: str, side: str, quantity: float, error_msg: str,
@@ -208,7 +75,6 @@ def analyze_order_error(symbol: str, side: str, quantity: float, error_msg: str,
         content = result["choices"][0]["message"]["content"]
 
         # 提取 JSON
-        import re
         match = re.search(r'\{[^{}]*\}', content)
         if match:
             raw = match.group().replace("'", '"')
@@ -224,49 +90,6 @@ def analyze_order_error(symbol: str, side: str, quantity: float, error_msg: str,
             print(f"\n[AI诊断] {content.strip()}")
     except Exception as e:
         print(f"[AI诊断] API 调用失败: {e}（原始错误: {error_msg}）")
-
-
-def run_analysis() -> dict | None:
-    """执行完整分析流程：取未分析动态 → 涨跌榜 → AI分析 → 生成信号 → 存储"""
-    feeds = get_unanalyzed_feeds()
-    if not feeds:
-        print("[AI分析] 无未分析的动态，尝试用涨跌榜数据辅助判断")
-        # 即使没有新动态，也拿涨跌榜数据看是否有机会
-        feeds_text = []
-    else:
-        feeds_text = [f["text"] for f in feeds]
-        feed_indices = [i for i, f in enumerate(get_unanalyzed_feeds()) if not f.get("analyzed")]
-
-    # 获取涨跌榜数据
-    print("\n  --- 采集涨跌榜数据 ---")
-    movers_text = format_movers_text(top_n=5)
-    if movers_text:
-        print(f"  [涨跌榜] 已获取\n{movers_text}")
-    else:
-        print("  [涨跌榜] 无数据")
-
-    # 候选币种从涨跌榜实时获取，市场在变候选也在变
-    candidates = get_dynamic_candidates(top_n=5)
-
-    # AI分析
-    if not feeds_text and not movers_text:
-        print("[AI分析] 既无新动态也无涨跌榜数据，跳过")
-        return None
-
-    signal = analyze_with_deepseek(feeds_text, symbol_candidates=candidates, movers_text=movers_text)
-
-    if signal:
-        # 标记已分析
-        if feeds_text and feed_indices:
-            mark_feeds_analyzed(feed_indices)
-        # 存储信号
-        save_signal(signal)
-        print(f"\n[AI信号] {signal.get('symbol','?')} {signal.get('action','?')} "
-              f"(信心 {signal.get('confidence',0)}%) — {signal.get('reason','')}")
-    else:
-        print("[AI分析] 未生成有效信号")
-
-    return signal
 
 
 _SUMMARY_ANALYSIS_PROMPT = """
@@ -360,7 +183,6 @@ def analyze_summary_stats(stats: dict) -> dict | None:
         result = resp.json()
         content = result["choices"][0]["message"]["content"]
 
-        import re
         match = re.search(r'\{[^{}]*\}', content)
         if match:
             raw = match.group().replace("'", '"')
@@ -371,4 +193,116 @@ def analyze_summary_stats(stats: dict) -> dict | None:
         return None
     except Exception as e:
         print(f"[AI汇总分析] API调用失败: {e}")
+        return None
+
+
+_FEED_SUMMARY_PROMPT = """
+你是一个加密市场新闻摘要助手。根据以下从币安广场和X.com采集的最新动态，生成一份简洁的摘要。
+
+输出JSON格式：
+{
+    "summary": "一至两句话概括今天的市场热点",
+    "hot_topics": ["话题1", "话题2", "话题3"],
+    "mention_coins": ["币种1", "币种2"]
+}
+
+要求：
+- summary 不超过100字
+- hot_topics 提取2-3个最热门的话题
+- mention_coins 列出动态中提及的币种（带USDT），如无则空数组
+"""
+
+
+def run_feed_summary() -> dict | None:
+    """
+    分析未处理的广场/X动态，生成AI摘要并发送微信通知。
+
+    流程：取未分析动态 → DeepSeek摘要 → 发微信 → 标记已分析
+    """
+    try:
+        from collector.feeds_db import get_unanalyzed_feeds, mark_feeds_analyzed, load_feeds
+    except Exception:
+        print("[AI消息摘要] data_manager 不可用，跳过")
+        return None
+
+    if not DEEPSEEK_API_KEY:
+        print("[AI消息摘要] API KEY 未配置，跳过")
+        return None
+
+    feeds = get_unanalyzed_feeds()
+    if not feeds:
+        return None
+
+    feeds_text = [f["text"] for f in feeds]
+    feed_indices = []
+    all_feeds = load_feeds()
+    for f in all_feeds:
+        if not f.get("analyzed") and f["text"] in feeds_text:
+            feed_indices.append(all_feeds.index(f))
+
+    # 截断长文本
+    full_text = ""
+    for i, text in enumerate(feeds_text[:15], 1):
+        text = text[:200] + ("..." if len(text) > 200 else "")
+        full_text += f"[动态 {i}] {text}\n"
+
+    try:
+        import requests
+        resp = requests.post(
+            DEEPSEEK_API_URL,
+            headers={
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": _FEED_SUMMARY_PROMPT},
+                    {"role": "user", "content": f"以下是来自币安广场和X.com的最新动态：\n{full_text}"},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 300,
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+
+        m = re.search(r"\{.*\}", content, re.DOTALL)
+        result = json.loads(m.group()) if m else {"summary": content[:100], "hot_topics": [], "mention_coins": []}
+
+        # 构建微信消息
+        summary_text = result.get("summary", "")
+        topics = result.get("hot_topics", [])
+        coins = result.get("mention_coins", [])
+
+        wx_lines = [
+            "<h3>🗞️ 市场消息速递</h3>",
+            f"<b>时间:</b> {datetime.now().strftime('%H:%M')}<br>",
+            "<b>来源:</b> 币安广场 + X.com<br>",
+            "<hr>",
+            f"<b>📌 摘要</b><br>{summary_text}<br>",
+        ]
+        if topics:
+            wx_lines.append(f"<hr><b>🔥 热门话题</b><br>{'、'.join(topics)}<br>")
+        if coins:
+            wx_lines.append(f"<hr><b>🪙 提及币种</b><br>{'、'.join(coins)}<br>")
+        wx_lines.append(f"<hr><span>共分析 {len(feeds_text)} 条动态</span>")
+
+        content_text = "\n".join(wx_lines)
+
+        from utils.notifier import send_notification
+        send_notification("🗞️ 市场消息速递", content_text)
+
+        print(f"  [AI消息摘要] {summary_text[:60]}...")
+        print("  [微信] 通知已发送")
+
+        # 标记已分析
+        if feed_indices:
+            mark_feeds_analyzed(feed_indices)
+
+        return result
+
+    except Exception as e:
+        print(f"[AI消息摘要] 失败: {e}")
         return None

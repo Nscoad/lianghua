@@ -1,5 +1,7 @@
 """复制 DB 再读"""
-import shutil, os, sqlite3
+import shutil
+import os
+import sqlite3
 
 src = os.path.join("data", "trading.db")
 dst = os.path.join("data", "_tmp_read.db")
@@ -16,7 +18,7 @@ try:
     rows = conn.execute(
         "SELECT time, message FROM run_log ORDER BY id DESC LIMIT 100"
     ).fetchall()
-    print(f"日志总数: 最新100条")
+    print("日志总数: 最新100条")
     print("=" * 100)
     for r in reversed(rows):
         print(f"{r[0]}  {r[1][:200]}")

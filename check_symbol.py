@@ -1,7 +1,7 @@
 """
 查询交易对信息
 """
-from core.trader import client
+from core.client import client
 
 resp = client.rest_api.exchange_information()
 for s in resp.data().symbols:

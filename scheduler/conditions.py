@@ -1,8 +1,7 @@
 """前置条件检查 + 状态查询"""
-from datetime import datetime
-from collector.square import ensure_chrome_debug
 from config import DEEPSEEK_API_KEY
 from utils.db import get_all_closed_trades
+
 
 
 def check_prerequisites() -> bool:
@@ -10,29 +9,34 @@ def check_prerequisites() -> bool:
     if not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY == "sk-你的key":
         print("[警告] DEEPSEEK_API_KEY 未配置，AI 分析将跳过。")
         ok = False
-    if not ensure_chrome_debug():
-        print("[错误] Chrome 调试模式启动失败。")
+    try:
+        from collector.square import ensure_chrome_debug
+        if not ensure_chrome_debug():
+            print("[错误] Chrome 调试模式启动失败。")
+            return False
+    except Exception as e:
+        print(f"[错误] Chrome 检查失败: {e}")
         return False
     return ok
 
 
 def print_status():
-    from strategy.risk_manager import load_risk_state
-    from scheduler import RISK_INTERVAL
-    state = load_risk_state()
+    from utils.trade.fast_trader import _load_state
+
+    fast_state = _load_state()
+    positions = fast_state.get("positions", {})
+    active = sum(1 for p in positions.values() if not p.get("closed", False))
 
     print(f"\n{'='*50}")
     print("  系统状态")
     print(f"{'='*50}")
-    print(f"  风险监控:      每 {RISK_INTERVAL} 秒")
-    print("  汇总报表:      每 60 秒检查（到点发 1h/3h/6h/12h/24h 到微信）")
-    if state.get("symbol"):
-        print(f"  当前持仓:      {state['symbol']}")
-        print(f"  当前保证金基准: {state.get('current_margin',0):.2f} USDT")
-        print(f"  原始开仓保证金: {state['original_margin']:.2f} USDT")
-        print(f"  止盈减仓:     {'已完成' if state.get('tp_done') else '等待中'}")
-    else:
-        print("  当前持仓:   无")
+    print("  快捞监测:     每 2 分钟")
+    print("  趋势采集:     每 30 分钟（广场+X→AI摘要→微信）")
+    print(f"  快捞仓位:     {active} 个")
+    if active > 0:
+        for sym, p in positions.items():
+            if not p.get("closed", False):
+                print(f"    {sym} {p.get('side','?')} 开@{p.get('entry_price',0)}")
 
     try:
         all_trades = get_all_closed_trades()

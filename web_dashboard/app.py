@@ -3,14 +3,14 @@ import json
 import os
 import sys
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-# 确保项目根目录在 Python 路径中
+# 确保项目根目录在 Python 路径中 (sys.path.insert 必须在 flask import 之前)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory  # noqa: E402
 
 DATA_DIR = PROJECT_ROOT / "data"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -50,7 +50,7 @@ def index():
 def api_balance():
     """账户余额（可用 + 钱包总余额）"""
     try:
-        from core.trader import client, _rate_limit
+        from core.client import client, _rate_limit
         _rate_limit()
         resp = client.rest_api.futures_account_balance_v3()
         available = 0.0
@@ -71,33 +71,61 @@ def api_balance():
 
 @app.route("/api/position")
 def api_position():
-    """当前仓位"""
+    """当前所有仓位（主仓 + 快捞多仓位）"""
     try:
-        from core.trader import get_open_position_symbol, get_position
-        sym = get_open_position_symbol()
-        if not sym:
-            return jsonify({"has_position": False, "symbol": None})
-        pos = get_position(sym)
-        risk = _read_json("risk_state.json")
+        from core.client import client, _rate_limit
+        _rate_limit()
+        resp = client.rest_api.position_information_v3()
+
+        positions = []
+        for p in resp.data():
+            amt = abs(float(p.position_amt))
+            if amt <= 0:
+                continue
+            entry_price = float(p.entry_price or 0)
+            mark_price = float(p.mark_price or 0)
+            upnl = float(p.un_realized_profit or 0)
+            side = "LONG" if float(p.position_amt) > 0 else "SHORT"
+            positions.append({
+                "symbol": p.symbol,
+                "entry_price": entry_price,
+                "mark_price": mark_price,
+                "amount": amt,
+                "unrealized_pnl": round(upnl, 2),
+                "side": side,
+            })
+
+        # 合并快捞状态信息（锁仓线等）
+        fast_state = _read_json("fast_trade_state.json")
+        fast_positions = {}
+        if isinstance(fast_state, dict):
+            pos_dict = fast_state.get("positions", {})
+            if not pos_dict and "symbol" in fast_state:
+                # 旧格式迁移
+                pos_dict = {fast_state["symbol"]: fast_state}
+            for sym, data in pos_dict.items():
+                if data.get("closed"):
+                    continue
+                fast_positions[sym] = {
+                    "profit_floor": data.get("profit_floor", 0),
+                    "highest_profit_pct": data.get("highest_profit_pct", 0),
+                    "entry_price": data.get("entry_price", 0),
+                }
+
+        # 合并数据
+        for pos in positions:
+            sym = pos["symbol"]
+            fp = fast_positions.get(sym, {})
+            pos["profit_floor"] = fp.get("profit_floor", 0)
+            pos["highest_profit_pct"] = fp.get("highest_profit_pct", 0)
+
         return jsonify({
-            "has_position": True,
-            "symbol": sym,
-            "position": {
-                "entry_price": float(pos["entry_price"]),
-                "amount": abs(float(pos["position_amt"])),
-                "unrealized_pnl": float(pos.get("un_realized_profit", 0)),
-                "mark_price": float(pos.get("mark_price", 0)),
-            },
-            "risk": {
-                "original_margin": risk.get("original_margin", 0),
-                "current_margin": risk.get("current_margin", 0),
-                "tp_done": risk.get("tp_done", False),
-                "cooling": risk.get("cooling", False),
-                "symbol": risk.get("symbol", ""),
-            },
+            "has_position": len(positions) > 0,
+            "positions": positions,
+            "count": len(positions),
         })
     except Exception as e:
-        return jsonify({"has_position": False, "error": str(e)})
+        return jsonify({"has_position": False, "positions": [], "error": str(e)})
 
 
 @app.route("/api/logs")
@@ -120,7 +148,7 @@ def api_logs():
 @app.route("/api/stats")
 def api_stats():
     """周期统计 1h/3h/6h/12h/24h"""
-    from utils.trade_stats import calc_period_stats
+    from utils.trade.stats import calc_period_stats
     periods = [1, 3, 6, 12, 24]
     result = {}
     for h in periods:
@@ -192,6 +220,15 @@ def api_system():
         "time": now.strftime("%Y-%m-%d %H:%M:%S"),
         "data_dir": str(DATA_DIR),
     })
+
+
+@app.route("/api/market_analysis")
+def api_market_analysis():
+    """30分钟市场概况 + AI分析"""
+    analysis = _read_json("market_analysis.json")
+    if not analysis:
+        return jsonify({"available": False, "error": "暂无数据"})
+    return jsonify({"available": True, **analysis})
 
 
 def start_server(host="0.0.0.0", port=5000, debug=False):

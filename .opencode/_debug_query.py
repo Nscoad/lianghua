@@ -1,4 +1,4 @@
-from utils.trade_records import get_trade_records, calc_period_stats
+from utils.db import get_trade_records
 from datetime import datetime, timedelta
 import json
 

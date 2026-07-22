@@ -1,9 +1,6 @@
-"""共享状态 — 各循环间的锁和计数器（含持久化）"""
+"""共享状态 — 汇总报表发送状态持久化"""
 import json
 import os
-
-risk_count = 0
-last_status = "no_position"
 
 _SUMMARY_STATE_FILE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "data", "summary_sent_state.json"

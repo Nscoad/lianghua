@@ -1,5 +1,5 @@
-from utils.data_manager import load_signals
-from utils.trade_records import get_trade_records
+from collector.feeds_db import load_signals
+from utils.db import get_trade_records
 from datetime import datetime, timedelta
 
 signals = load_signals()

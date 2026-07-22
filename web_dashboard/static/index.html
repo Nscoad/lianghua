@@ -124,7 +124,7 @@
     <div class="card-sub" id="positionDetail"></div>
   </div>
   <div class="card">
-    <div class="card-header">⚡ 风控状态</div>
+    <div class="card-header">⚡ 浮盈概况</div>
     <div class="card-value" id="riskStatus" style="font-size:20px;">--</div>
     <div class="card-sub" id="riskDetail"></div>
   </div>
@@ -151,13 +151,18 @@
 </div>
 <div id="periodStats"></div>
 
+<!-- 市场概况 -->
+<div class="section-title" style="margin-top: 16px;">📊 市场概况</div>
+<div class="card" id="marketCard">
+  <div id="marketContent" style="font-size:13px;line-height:1.6;">
+    <div style="color:var(--muted)">加载中...</div>
+  </div>
+</div>
+
 <!-- 仓位详情 -->
-<div class="section-title" style="margin-top: 16px;">🔍 仓位详情</div>
+<div class="section-title" style="margin-top: 16px;">🔍 仓位列表</div>
 <div class="card" id="positionCard">
-  <table class="pos-table">
-    <thead><tr><th>字段</th><th>值</th></tr></thead>
-    <tbody id="positionTable"></tbody>
-  </table>
+  <div id="positionTableContainer"></div>
 </div>
 
 <!-- 日志 -->
@@ -227,46 +232,53 @@ async function loadPosition() {
   const detEl = document.getElementById('positionDetail');
   const riskEl = document.getElementById('riskStatus');
   const riskDet = document.getElementById('riskDetail');
-  const posTbody = document.getElementById('positionTable');
+  const container = document.getElementById('positionTableContainer');
 
-  if (data.has_position) {
-    const p = data.position;
-    const r = data.risk;
-    const pnl = p.unrealized_pnl || 0;
-    symEl.textContent = `${data.symbol}`;
+  if (data.has_position && data.positions && data.positions.length > 0) {
+    const count = data.positions.length;
+    symEl.textContent = `${count} 个仓位`;
     symEl.className = 'card-value green';
-    detEl.innerHTML = `开仓价: ${fmt(p.entry_price)} | 数量: ${fmt(p.amount)} | 浮盈: ${pnlText(pnl)}`;
 
-    // 风控状态
-    let statusText = '运行中';
-    let statusClass = 'green';
-    if (r.cooling) { statusText = '冷却中'; statusClass = 'yellow'; }
-    if (r.tp_done) { statusText = '已保本'; statusClass = 'blue'; }
-    riskEl.textContent = statusText;
-    riskEl.className = `card-value ${statusClass}`;
+    // 总浮盈
+    let totalUpnl = 0;
+    for (const p of data.positions) totalUpnl += Number(p.unrealized_pnl || 0);
+    detEl.textContent = `总浮盈: ${totalUpnl > 0 ? '+' : ''}${fmt(totalUpnl)} USDT`;
 
-    riskDet.innerHTML = `浮盈: ${pnlText(pnl)} USDT | 保证⾦: ${fmt(r.current_margin)}`;
+    riskEl.innerHTML = pnlText(totalUpnl) + ' USDT';
+    riskDet.textContent = `${count} 个持仓`;
 
-    // 仓位详情表
-    posTbody.innerHTML = `
-      <tr><td>交易对</td><td>${data.symbol}</td></tr>
-      <tr><td>开仓价</td><td>${fmt(p.entry_price)}</td></tr>
-      <tr><td>标记价</td><td>${fmt(p.mark_price)}</td></tr>
-      <tr><td>数量</td><td>${fmt(p.amount, 4)}</td></tr>
-      <tr><td>未实现盈亏</td><td class="${pnlClass(pnl)}">${pnl > 0 ? '+' : ''}${fmt(pnl)} USDT</td></tr>
-      <tr><td>初始保证金</td><td>${fmt(r.original_margin)}</td></tr>
-      <tr><td>当前保证金</td><td>${fmt(r.current_margin)}</td></tr>
-      <tr><td>首轮止盈保本</td><td>${r.tp_done ? '✅ 已保本' : '⏳ 未触发'}</td></tr>
-      <tr><td>冷却状态</td><td>${r.cooling ? '🔴 冷却中' : '🟢 正常'}</td></tr>
-    `;
+    // 仓位表格
+    let html = '<table class="pos-table"><thead><tr>' +
+      '<th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>标记价</th>' +
+      '<th>浮盈</th><th>最高盈%</th><th>锁仓线%</th></tr></thead><tbody>';
+
+    for (const p of data.positions) {
+      const pnl = Number(p.unrealized_pnl || 0);
+      const highest = (Number(p.highest_profit_pct || 0) * 100).toFixed(1);
+      const floor = (Number(p.profit_floor || 0) * 100).toFixed(1);
+      const sideLabel = p.side === 'LONG' ? '🟢 多' : '🔴 空';
+      html += `<tr>
+        <td><b>${p.symbol}</b></td>
+        <td>${sideLabel}</td>
+        <td>${fmt(p.amount, 4)}</td>
+        <td>${fmt(p.entry_price, 6)}</td>
+        <td>${fmt(p.mark_price, 6)}</td>
+        <td class="${pnlClass(pnl)}">${pnl > 0 ? '+' : ''}${fmt(pnl)}</td>
+        <td>${highest}%</td>
+        <td>${floor}%</td>
+      </tr>`;
+    }
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
   } else {
     symEl.textContent = '空仓';
     symEl.className = 'card-value muted';
     detEl.textContent = '当前无持仓';
-    riskEl.textContent = '无仓位';
+    riskEl.textContent = '--';
     riskEl.className = 'card-value';
     riskDet.textContent = '';
-    posTbody.innerHTML = '<tr><td colspan="2" style="color:var(--muted);text-align:center;">无持仓</td></tr>';
+    container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:20px;">暂无持仓</div>';
   }
 }
 
@@ -332,6 +344,61 @@ async function loadLogs(limit = 200) {
   el.scrollTop = el.scrollHeight;
 }
 
+// 加载市场概况
+async function loadMarketAnalysis() {
+  const data = await fetchJSON('/api/market_analysis');
+  const el = document.getElementById('marketContent');
+  if (!data.available) {
+    el.innerHTML = '<div style="color:var(--muted)">暂无市场数据（等待首次30分钟采集）</div>';
+    return;
+  }
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <span style="color:var(--muted);font-size:12px;">采集于 ${data.time?.slice(11,16) || '--'}</span>
+    <span>涨 <span class="green">${data.up_count}</span> / 跌 <span class="red">${data.down_count}</span> / 均 <span class="${data.avg_change > 0 ? 'green' : 'red'}">${data.avg_change > 0 ? '+' : ''}${data.avg_change}%</span></span>
+  </div>`;
+
+  // 涨跌榜
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px;">';
+  html += '<div><div style="color:var(--green);font-weight:600;font-size:12px;margin-bottom:4px;">涨幅前5</div>';
+  if (data.top_gainers?.length) {
+    for (const g of data.top_gainers) {
+      html += `<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${g.symbol}</span><span class="green">+${g.change}%</span></div>`;
+    }
+  }
+  html += '</div><div><div style="color:var(--red);font-weight:600;font-size:12px;margin-bottom:4px;">跌幅前5</div>';
+  if (data.top_losers?.length) {
+    for (const l of data.top_losers) {
+      html += `<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${l.symbol}</span><span class="red">${l.change}%</span></div>`;
+    }
+  }
+  html += '</div></div>';
+
+  // 概况描述
+  if (data.summary) {
+    html += `<div style="background:#010409;border-radius:4px;padding:8px;margin-bottom:6px;font-size:12px;color:var(--muted);">${data.summary}</div>`;
+  }
+
+  // AI分析
+  if (data.ai_analysis && data.ai_analysis.sentiment) {
+    const sentimentMap = { '看多': '🟢', '看空': '🔴', '震荡': '🟡' };
+    const dot = sentimentMap[data.ai_analysis.sentiment] || '⚪';
+    html += `<div style="background:rgba(88,166,255,0.08);border:1px solid rgba(88,166,255,0.2);border-radius:6px;padding:10px;">`;
+    html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+      <span>${dot}</span><span style="font-weight:600;">AI 市场分析</span>
+      <span class="badge ${data.ai_analysis.sentiment === '看多' ? 'badge-green' : data.ai_analysis.sentiment === '看空' ? 'badge-red' : 'badge-yellow'}">${data.ai_analysis.sentiment}</span>
+    </div>`;
+    if (data.ai_analysis.summary) {
+      html += `<div style="font-size:12px;margin-bottom:4px;">${data.ai_analysis.summary}</div>`;
+    }
+    if (data.ai_analysis.advice) {
+      html += `<div style="font-size:12px;color:var(--blue);">💡 ${data.ai_analysis.advice}</div>`;
+    }
+    html += '</div>';
+  }
+
+  el.innerHTML = html;
+}
+
 // ==================== 事件绑定 ====================
 document.getElementById('periodTabs').addEventListener('click', e => {
   const tab = e.target.closest('.tab');
@@ -355,6 +422,7 @@ function refreshAll() {
   loadBalance();
   loadPosition();
   loadOverview();
+  loadMarketAnalysis();
   loadPeriodStats(document.querySelector('#periodTabs .tab.active')?.dataset?.period || '1h');
   loadLogs(parseInt(document.querySelector('#logTabs .tab.active')?.dataset?.log || '200'));
 }

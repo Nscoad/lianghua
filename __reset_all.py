@@ -18,7 +18,7 @@ if os.path.exists(db_path):
         print(f"  [清空] 表 {t[0]}")
     conn.commit()
     conn.close()
-    print(f"  [OK] 数据库已清空")
+    print("  [OK] 数据库已清空")
 else:
     print(f"  [跳过] {db_path} 不存在")
 
@@ -48,7 +48,7 @@ if os.path.exists(kline_db):
             conn.execute(f"DELETE FROM {t[0]}")
         conn.commit()
         conn.close()
-        print(f"  [OK] klines.db 已清空")
+        print("  [OK] klines.db 已清空")
     except Exception as e:
         print(f"  [跳过] klines.db: {e}")
 else:
