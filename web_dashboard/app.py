@@ -228,6 +228,14 @@ def api_market_analysis():
     return jsonify({"available": True, **analysis})
 
 
+@app.route("/api/heartbeat")
+def api_heartbeat():
+    """任务心跳状态"""
+    from utils.state import get_heartbeats
+    beats = get_heartbeats()
+    return jsonify({"tasks": beats, "count": len(beats)})
+
+
 def start_server(host="0.0.0.0", port=5000, debug=False):
     """启动看板服务器"""
     print(f"\n  📊 本地看板: http://localhost:{port}")

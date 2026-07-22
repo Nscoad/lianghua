@@ -6,6 +6,7 @@ from scheduler import FAST_MONITOR_INTERVAL
 from scheduler.state import (
     summary_sent_cycle, _save_summary_sent_cycle,
 )
+from utils.state import beat
 
 
 # ==================== 快捞循环（2分钟） ====================
@@ -19,6 +20,7 @@ def fast_loop():
             print(f"\n[错误] 快捞循环异常: {e}")
             import traceback
             traceback.print_exc()
+        beat("fast_loop", "ok" if "Exception" not in dir() else "error")
         time.sleep(FAST_MONITOR_INTERVAL)
 
 
@@ -55,6 +57,7 @@ def trend_loop():
             traceback.print_exc()
         finally:
             _trend_lock = False
+        beat("trend_loop", "ok" if "Exception" not in dir() else "error")
         time.sleep(TREND_INTERVAL)
 
 
@@ -116,4 +119,5 @@ def summary_loop():
             _check_and_send_summary()
         except Exception as e:
             print(f"\n[错误] 汇总循环异常: {e}")
+        beat("summary_loop")
         time.sleep(60)

@@ -68,10 +68,6 @@ def init_db():
     conn.commit()
     _migrate_log_jsonl(conn)
 
-    # 状态表（快捞仓位 + 冷却 + 汇总发送记录）
-    from utils.state import init_state_tables
-    init_state_tables()
-
 
 # ==================== 迁移旧数据（幂等） ====================
 
