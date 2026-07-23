@@ -41,6 +41,31 @@ def init_db():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_time ON trade_records(time)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_symbol ON trade_records(symbol)")
+    # 新增列（幂等：已存在时忽略）
+    try:
+        conn.execute("ALTER TABLE trade_records ADD COLUMN slippage REAL DEFAULT 0")
+    except Exception:
+        pass  # 列已存在
+    try:
+        conn.execute("ALTER TABLE trade_records ADD COLUMN entry_mode TEXT DEFAULT ''")
+    except Exception:
+        pass  # 列已存在
+
+    # 资金费率流水
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS funding_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            time TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            funding_rate REAL DEFAULT 0,
+            payment REAL DEFAULT 0,
+            mark_price REAL DEFAULT 0,
+            position_qty REAL DEFAULT 0
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_funding_time ON funding_records(time)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_funding_symbol ON funding_records(symbol)")
 
     # 复盘
     conn.execute("""
@@ -134,16 +159,17 @@ def _migrate_log_jsonl(conn: sqlite3.Connection):
 def insert_trade_record(record: dict):
     conn = _get_trade_conn()
     conn.execute("""
-        INSERT INTO trade_records (time, symbol, side, reason, realized_pnl, fee, net_pnl, qty, entry_price, exit_price, is_partial, order_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO trade_records (time, symbol, side, reason, realized_pnl, fee, net_pnl, qty, entry_price, exit_price, is_partial, order_id, slippage, entry_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         record.get("time", datetime.now().isoformat()),
-        record.get("symbol", ""), record.get("side", ""),
-        record.get("reason", ""), record.get("realized_pnl", 0),
+        record.get("symbol"), record.get("side"),
+        record.get("reason"), record.get("realized_pnl", 0),
         record.get("fee", 0), record.get("net_pnl", 0),
         record.get("qty", 0), record.get("entry_price", 0),
         record.get("exit_price", 0), 1 if record.get("is_partial") else 0,
-        record.get("order_id", 0),
+        record.get("order_id", 0), record.get("slippage", 0),
+        record.get("entry_mode", ""),
     ))
     conn.commit()
 
@@ -151,11 +177,9 @@ def insert_trade_record(record: dict):
 def get_trade_records(limit: int = 50) -> list[dict]:
     conn = _get_trade_conn()
     rows = conn.execute(
-        "SELECT * FROM trade_records ORDER BY id DESC LIMIT ?", (limit,)
+        "SELECT * FROM trade_records ORDER BY time DESC, id DESC LIMIT ?", (limit,)
     ).fetchall()
-    result = [dict(r) for r in rows]
-    result.reverse()
-    return result
+    return [dict(r) for r in rows]
 
 
 def get_trade_records_since(hours: int) -> list[dict]:
@@ -194,7 +218,9 @@ def calc_period_stats(hours: int) -> dict | None:
     for r in rows:
         d = dict(r)
         reason = d["reason"]
-        pnl = d.get("net_pnl", d["realized_pnl"])
+        pnl = d.get("net_pnl")
+        if pnl is None:
+            pnl = d["realized_pnl"]
         if reason not in by_reason:
             by_reason[reason] = {"count": 0, "win": 0, "loss": 0, "pnl": 0.0, "partial": 0}
         by_reason[reason]["count"] += 1
@@ -214,9 +240,15 @@ def calc_period_stats(hours: int) -> dict | None:
             short_count += 1
             short_pnl += pnl
 
-    total_pnl = sum(r["net_pnl"] or r["realized_pnl"] for r in rows)
-    win = sum(1 for r in rows if (r["net_pnl"] or r["realized_pnl"]) > 0)
-    loss = sum(1 for r in rows if (r["net_pnl"] or r["realized_pnl"]) <= 0)
+    pnl_values = []
+    for r in rows:
+        v = r["net_pnl"]
+        if v is None:
+            v = r["realized_pnl"]
+        pnl_values.append(v)
+    total_pnl = sum(pnl_values)
+    win = sum(1 for v in pnl_values if v > 0)
+    loss = sum(1 for v in pnl_values if v <= 0)
     total = win + loss
     win_rate = round(win / total * 100, 1) if total > 0 else 0
 
@@ -269,6 +301,45 @@ def calc_period_stats(hours: int) -> dict | None:
         "long_pnl": round(long_pnl, 2), "short_pnl": round(short_pnl, 2),
         "by_reason": reasons_list, "by_symbol": by_symbol,
     }
+
+
+# ==================== 资金费率 ====================
+
+def insert_funding_record(record: dict):
+    conn = _get_trade_conn()
+    conn.execute("""
+        INSERT INTO funding_records (time, symbol, side, funding_rate, payment, mark_price, position_qty)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record.get("time", datetime.now().isoformat()),
+        record.get("symbol", ""), record.get("side", ""),
+        record.get("funding_rate", 0), record.get("payment", 0),
+        record.get("mark_price", 0), record.get("position_qty", 0),
+    ))
+    conn.commit()
+
+
+def get_funding_records(limit: int = 50) -> list[dict]:
+    conn = _get_trade_conn()
+    rows = conn.execute(
+        "SELECT * FROM funding_records ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    result = [dict(r) for r in rows]
+    result.reverse()
+    return result
+
+
+def get_total_funding_payment(since: str | None = None) -> float:
+    """获取累计资金费率支出（正=支出，负=收入）"""
+    conn = _get_trade_conn()
+    if since:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(payment), 0) FROM funding_records WHERE time >= ?",
+            (since,)
+        ).fetchone()
+    else:
+        row = conn.execute("SELECT COALESCE(SUM(payment), 0) FROM funding_records").fetchone()
+    return row[0]
 
 
 # ==================== 复盘 ====================

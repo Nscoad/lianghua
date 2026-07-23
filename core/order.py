@@ -12,7 +12,19 @@ from binance_sdk_derivatives_trading_usds_futures.rest_api.models import (
 )
 from config import get_futures_config
 from core.client import _rate_limit, _handle_api_error, _TIME_OFFSET
-from core.queries import get_position, get_fills_agg, _get_symbol_limits
+from core.queries import get_position, get_fills_agg, get_current_price, _get_symbol_limits
+
+
+def _calc_slippage(side: str, expected: float | None, actual: float, qty: float) -> float:
+    """计算市价单滑点成本（USDT），始终>=0 表示对交易者的不利偏差"""
+    if not expected or expected <= 0 or actual <= 0 or qty <= 0:
+        return 0.0
+    if side in ("BUY", "SELL"):
+        # BUY=开多/平空：实际价比预期价高则有滑点
+        # SELL=开空/平多：实际价比预期价低则有滑点
+        diff = (actual - expected) if side == "BUY" else (expected - actual)
+        return round(max(0.0, diff * qty), 4)
+    return 0.0
 
 
 def set_leverage(symbol: str, leverage: int):
@@ -32,6 +44,9 @@ def set_leverage(symbol: str, leverage: int):
 def place_market_order(symbol: str, side: str, quantity: float):
     from core.client import client
     try:
+        # 记录下单前的行情价（用于计算滑点）
+        expected_price = get_current_price(symbol)
+
         _t0 = time.perf_counter()
         _rate_limit()
         resp = client.rest_api.new_order(
@@ -52,8 +67,13 @@ def place_market_order(symbol: str, side: str, quantity: float):
             print(f"  成交: {fills['qty']:.0f} @ {fills['avg_price']:.8f}")
             print(f"  手续费: {fills['commission']:.4f} USDT")
             print(f"  已实现盈亏: {fills['realized_pnl']:+.2f} USDT")
+            # 计算滑点（USDT，始终>=0，表示对交易者的不利偏差）
+            fills["slippage"] = _calc_slippage(side, expected_price, fills["avg_price"], fills["qty"])
+            if fills["slippage"] > 0:
+                print(f"  滑点: {fills['slippage']:.4f} USDT")
         else:
             print("  ⚠ 暂未查到成交明细，使用订单返回的估算数据")
+            fills["slippage"] = 0.0
 
         return data, fills
     except Exception as e:
@@ -66,7 +86,7 @@ def place_market_order(symbol: str, side: str, quantity: float):
             analyze_order_error(symbol, side, quantity, error_msg)
         except Exception:
             pass
-        empty = {"qty": 0.0, "avg_price": 0.0, "commission": 0.0, "realized_pnl": 0.0}
+        empty = {"qty": 0.0, "avg_price": 0.0, "commission": 0.0, "realized_pnl": 0.0, "slippage": 0.0}
         return None, empty
 
 
@@ -123,7 +143,7 @@ def place_stop_loss_order(symbol: str, side: str, quantity: float, entry_price: 
 
 def close_position(symbol: str = "BTCUSDT"):
     """平仓，返回 (order_data, fills_agg)"""
-    empty = {"qty": 0.0, "avg_price": 0.0, "commission": 0.0, "realized_pnl": 0.0}
+    empty = {"qty": 0.0, "avg_price": 0.0, "commission": 0.0, "realized_pnl": 0.0, "slippage": 0.0}
     try:
         pos = get_position(symbol)
         if not pos:

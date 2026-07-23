@@ -60,6 +60,37 @@ def get_current_price(symbol: str = "BTCUSDT") -> float | None:
         return None
 
 
+def get_real_price(symbol: str = "BTCUSDT") -> float | None:
+    """
+    始终从币安实盘（mainnet）获取实时价格。
+    用于测试网模式下止损/锁仓判断，避免测试网深度失真导致错误决策。
+    实盘模式下等同 get_current_price，直接复用客户端。
+    """
+    from config import USE_TESTNET, MAINNET_FUTURES_URL, MAINNET_API_KEY
+
+    if not USE_TESTNET:
+        return get_current_price(symbol)
+
+    _now = time.time()
+    _key = f"real_{symbol}"
+    if _key in _cache and _now - _cache[_key]["t"] < 5:
+        return _cache[_key]["v"]
+    try:
+        import requests as _req
+        resp = _req.get(
+            f"{MAINNET_FUTURES_URL}/fapi/v1/ticker/price?symbol={symbol}",
+            headers={"X-MBX-APIKEY": MAINNET_API_KEY, "User-Agent": "Mozilla/5.0"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            rv = float(resp.json()["price"])
+            _cache[_key] = {"t": _now, "v": rv}
+            return rv
+        return None
+    except Exception:
+        return None
+
+
 def get_fills_agg(symbol: str, order_id: int, max_retries: int = 3) -> dict:
     """
     从交易所查询某笔订单的真实成交数据（累加所有成交明细）。

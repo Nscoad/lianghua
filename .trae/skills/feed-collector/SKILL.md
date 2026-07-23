@@ -17,6 +17,21 @@ description: "数据采集层 — 用Selenium从币安广场爬取关注动态 +
 | `collector/x_collector.py` | X.com 首页推文采集 |
 | `collector/trend_collector.py` | 趋势数据整合函数 |
 | `collector/feed_collector.py` | 采集 + 存储的封装 |
+| `collector/feeds_db.py` | 采集数据管理（去重/过期清理） |
+| `run_feed_collector.py` | 独立运行入口 |
+
+## 运行方式
+
+```bash
+# 单次采集 + AI摘要 → 微信
+uv run python run_feed_collector.py
+
+# 仅采集，不做AI摘要
+uv run python run_feed_collector.py --collect-only
+
+# 循环模式（每30分钟自动采集）
+uv run python run_feed_collector.py --loop
+```
 
 ## 导出函数
 
@@ -28,7 +43,9 @@ description: "数据采集层 — 用Selenium从币安广场爬取关注动态 +
 
 ## 前置条件
 
-Chrome 必须以调试模式启动（端口 9555），并已登录币安。系统启动时自动检测并启动 Chrome。
+- Chrome 需以调试模式启动（端口 9555），并已登录币安和 X.com
+- `run_feed_collector.py` 启动时自动检测 Chrome 状态
+- 不再由系统启动时自动检查 Chrome 状态
 
 ## 去重策略
 

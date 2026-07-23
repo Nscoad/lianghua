@@ -1,5 +1,6 @@
-"""4个并行循环线程：市场监控、快捞、趋势采集、汇总报表"""
+"""5个并行循环线程：快捞、持仓监控、汇总报表、定时对账"""
 import time
+import traceback
 from datetime import datetime
 from utils.market.monitor import run_fast_monitor
 from scheduler import FAST_MONITOR_INTERVAL
@@ -7,6 +8,12 @@ from scheduler.state import (
     summary_sent_cycle, _save_summary_sent_cycle,
 )
 from utils.state import beat
+from utils.trade.fast_trader import check_fast_position
+from utils.trade.stats import calc_period_stats, periodic_reconcile
+from utils.trade.analysis import save_summary_analysis
+from utils.notifier import send_summary_report
+from ai.analyzer import analyze_summary_stats
+from core.funding import check_and_record_funding
 
 
 # ==================== 快捞循环（2分钟） ====================
@@ -18,47 +25,41 @@ def fast_loop():
             run_fast_monitor()
         except Exception as e:
             print(f"\n[错误] 快捞循环异常: {e}")
-            import traceback
             traceback.print_exc()
-        beat("fast_loop", "ok" if "Exception" not in dir() else "error")
+        beat("fast_loop", "ok")
         time.sleep(FAST_MONITOR_INTERVAL)
 
 
-# ==================== 趋势采集循环（30分钟） ====================
+# ==================== 持仓监控循环（5秒） ====================
 
-TREND_INTERVAL = 30 * 60  # 30分钟
-
-_trend_lock = False
-
-
-def trend_loop():
+def position_loop():
     """
-    每15分钟采集广场热门+X.com动态，AI摘要后发微信通知。
+    每5秒检查已有快捞持仓的止损/浮动锁仓。
+    与 fast_loop 分离，避免2分钟间隔导致跳空止损。
     """
-    global _trend_lock
-    print("[趋势采集] 线程已启动，等待首次采集...")
-    time.sleep(30)  # 启动后等30秒再开始
+    print("[持仓监控] 线程已启动（每5秒检查止损/锁仓）")
+    time.sleep(3)  # 启动后等3秒
+    # 资金费率每10分钟检查一次
+    _funding_last = 0.0
+    _funding_interval = 600  # 10分钟
     while True:
-        if _trend_lock:
-            time.sleep(10)
-            continue
-        _trend_lock = True
         try:
-            from collector.trend_collector import collect_trends
-            from ai.analyzer import run_feed_summary
-
-            # 1. 采集
-            collect_trends(max_items_per_source=10)
-            # 2. AI摘要并发送微信
-            run_feed_summary()
+            check_fast_position()
         except Exception as e:
-            print(f"\n[错误] 趋势采集循环异常: {e}")
-            import traceback
+            print(f"\n[错误] 持仓监控异常: {e}")
             traceback.print_exc()
-        finally:
-            _trend_lock = False
-        beat("trend_loop", "ok" if "Exception" not in dir() else "error")
-        time.sleep(TREND_INTERVAL)
+        # 每10分钟检查一次资金费率（仅当有持仓时）
+        now = time.time()
+        if now - _funding_last >= _funding_interval:
+            try:
+                total = check_and_record_funding()
+                if total != 0:
+                    print(f"[资金费率] 本次新增资金费 {total:+.4f} USDT")
+            except Exception:
+                pass
+            _funding_last = now
+        beat("position_loop", "ok")
+        time.sleep(5)
 
 
 # ==================== 汇总报表循环（每分钟检查） ====================
@@ -88,11 +89,6 @@ def _check_and_send_summary():
                 continue
 
         try:
-            from utils.trade.stats import calc_period_stats
-            from utils.trade.analysis import save_summary_analysis
-            from utils.notifier import send_summary_report
-            from ai.analyzer import analyze_summary_stats
-
             summary_sent_cycle[cycle_key] = current_day if hours == 24 else current_hour
             _save_summary_sent_cycle(summary_sent_cycle)
 
@@ -109,7 +105,6 @@ def _check_and_send_summary():
                 print(f"\n[汇总] {label} 报表已发送 (无交易记录)")
         except Exception as e:
             print(f"\n[错误] {label} 汇总发送异常: {e}")
-            import traceback
             traceback.print_exc()
 
 
@@ -121,3 +116,21 @@ def summary_loop():
             print(f"\n[错误] 汇总循环异常: {e}")
         beat("summary_loop")
         time.sleep(60)
+
+
+# ==================== 定时对账循环（30分钟） ====================
+
+def reconcile_loop():
+    """
+    每30分钟扫描最近1小时的所有成交记录，补漏缺失的平仓流水。
+    确保 trade_records 数据的完整性。
+    """
+    print("[定时对账] 线程已启动（每30分钟补充遗漏记录）")
+    time.sleep(10)  # 等启动对账跑完
+    while True:
+        try:
+            periodic_reconcile()
+        except Exception as e:
+            print(f"\n[错误] 定时对账异常: {e}")
+        beat("reconcile_loop")
+        time.sleep(1800)

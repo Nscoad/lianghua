@@ -11,7 +11,7 @@ URL_FILE = os.path.join(os.path.dirname(__file__), "data", "cloudflare_url.txt")
 
 
 def _wait_url_saver(app):
-    """等 cloudflared URL 就绪后写入文件"""
+    """等 cloudflared URL 就绪后写入文件，再通过微信通知"""
     from flask_cloudflared import get_cloudflared_url
     for _ in range(60):  # 最多等 60 秒
         url = get_cloudflared_url()
@@ -20,6 +20,15 @@ def _wait_url_saver(app):
                 f.write(url + "\n")
             print(f"\n  🌐 Cloudflare Tunnel: {url}")
             print(f"  {'=' * 50}\n")
+            # 微信通知新地址
+            try:
+                from utils.notifier import send_notification
+                send_notification(
+                    "🌐 看板地址已更新",
+                    f"Cloudflare Tunnel 已就绪：<br><a href='{url}'>{url}</a>",
+                )
+            except Exception:
+                pass
             return
         time.sleep(1)
     print("\n  ⚠ Cloudflare Tunnel 未就绪")

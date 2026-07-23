@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +17,10 @@ DATA_DIR = PROJECT_ROOT / "data"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
+
+# 简单的内存缓存，避免高频请求触发币安限频
+_CACHE: dict = {}
+_CACHE_TTL = 30  # 30秒
 
 # 确保 static 目录存在
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -48,7 +53,11 @@ def index():
 
 @app.route("/api/balance")
 def api_balance():
-    """账户余额（可用 + 钱包总余额）"""
+    """账户余额（可用 + 钱包总余额），30秒缓存避免触发限频"""
+    now = time.time()
+    cached = _CACHE.get("balance")
+    if cached and now - cached["t"] < _CACHE_TTL:
+        return jsonify(cached["v"])
     try:
         from core.client import client, _rate_limit
         _rate_limit()
@@ -60,11 +69,13 @@ def api_balance():
                 available = float(b.available_balance or 0)
                 wallet = float(b.balance or 0)
                 break
-        return jsonify({
+        result = {
             "available": round(available, 2),
             "wallet": round(wallet, 2),
             "time": datetime.now().isoformat(),
-        })
+        }
+        _CACHE["balance"] = {"t": now, "v": result}
+        return jsonify(result)
     except Exception as e:
         return jsonify({"available": 0, "wallet": 0, "error": str(e), "time": datetime.now().isoformat()})
 
@@ -174,7 +185,9 @@ def api_summary():
     total_pnl = 0.0
     win = 0
     for r in rows:
-        pnl = r["net_pnl"] or r["realized_pnl"]
+        pnl = r["net_pnl"]
+        if pnl is None:
+            pnl = r["realized_pnl"]
         total_pnl += pnl
         if pnl > 0:
             win += 1
@@ -207,6 +220,29 @@ def api_signals():
     if isinstance(signals, list):
         signals = signals[-10:]
     return jsonify({"signals": signals if isinstance(signals, list) else []})
+
+
+@app.route("/api/trades")
+def api_trades():
+    """最近交易流水（含滑点）"""
+    limit = request.args.get("limit", 50, type=int)
+    from utils.db import get_trade_records
+    records = get_trade_records(limit)
+    return jsonify({"records": records, "count": len(records)})
+
+
+@app.route("/api/funding")
+def api_funding():
+    """资金费率记录"""
+    limit = request.args.get("limit", 30, type=int)
+    from utils.db import get_funding_records, get_total_funding_payment
+    records = get_funding_records(limit)
+    total = get_total_funding_payment()
+    return jsonify({
+        "records": records,
+        "count": len(records),
+        "total_payment": round(total, 4),
+    })
 
 
 @app.route("/api/system")

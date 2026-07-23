@@ -8,15 +8,7 @@ def check_prerequisites() -> bool:
     ok = True
     if not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY == "sk-你的key":
         print("[警告] DEEPSEEK_API_KEY 未配置，AI 分析将跳过。")
-        ok = False
-    try:
-        from collector.square import ensure_chrome_debug
-        if not ensure_chrome_debug():
-            print("[错误] Chrome 调试模式启动失败。")
-            return False
-    except Exception as e:
-        print(f"[错误] Chrome 检查失败: {e}")
-        return False
+        # 不阻止启动，只警告
     return ok
 
 
@@ -31,7 +23,6 @@ def print_status():
     print("  系统状态")
     print(f"{'='*50}")
     print("  快捞监测:     每 2 分钟")
-    print("  趋势采集:     每 30 分钟（广场+X→AI摘要→微信）")
     print(f"  快捞仓位:     {active} 个")
     if active > 0:
         for sym, p in positions.items():

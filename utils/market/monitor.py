@@ -7,6 +7,7 @@ import os
 import time
 from datetime import datetime
 from core.client import client
+from utils.trade.fast_trader import check_fast_position, try_fast_open, try_fast_short
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
 DB_PATH = os.path.join(DATA_DIR, "market_monitor.db")
@@ -18,7 +19,7 @@ MIN_VOLUME_USDT = 1_000_000
 # 快捞参数
 FAST_CHECK_INTERVAL = 120    # 每2分钟检查一次
 FAST_LOOKBACK = 900          # 对比15分钟前的价格
-FAST_SURGE_THRESHOLD = 0.06  # 15分钟内涨幅>6%触发
+FAST_SURGE_THRESHOLD = 0.073  # 15分钟内涨跌幅度 >7.3% 触发
 FAST_MIN_VOLUME = 500_000    # 最低成交额
 
 def _init_db():
@@ -182,7 +183,7 @@ def _build_market_summary(movers, top_gainers, top_losers, up_count, down_count,
 def _ai_analyze_market(top_gainers, top_losers, up_count, down_count, avg_change) -> dict | None:
     """调用AI分析当前市场状态"""
     try:
-        from ai.analyzer import DEEPSEEK_API_KEY
+        from config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL
         if not DEEPSEEK_API_KEY:
             return None
     except Exception:
@@ -210,7 +211,7 @@ def _ai_analyze_market(top_gainers, top_losers, up_count, down_count, avg_change
     try:
         import requests
         resp = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
+            DEEPSEEK_API_URL,
             headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": "deepseek-chat",
@@ -244,8 +245,6 @@ def _save_analysis(report: dict):
 
 def run_fast_monitor():
     """每2分钟监测：检测快速涨幅并触发快捞"""
-    from utils.trade.fast_trader import check_fast_position, try_fast_open, try_fast_short
-
     check_fast_position()
 
     conn = _init_db()

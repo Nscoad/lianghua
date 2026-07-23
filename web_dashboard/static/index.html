@@ -165,6 +165,29 @@
   <div id="positionTableContainer"></div>
 </div>
 
+<!-- 交易明细 -->
+<div class="section-title" style="margin-top: 16px;">📋 最近交易 <span style="font-size:12px;color:var(--muted);font-weight:400;">（含滑点）</span></div>
+<div class="card" id="tradeCard">
+  <div style="max-height:300px;overflow-y:auto;">
+    <table class="pos-table"><thead><tr>
+      <th>时间</th><th>币种</th><th>方向</th><th>入场</th><th>原因</th><th>盈亏</th><th>手续费</th><th>滑点</th><th>净盈亏</th>
+    </tr></thead><tbody id="tradeBody"></tbody></table>
+  </div>
+</div>
+
+<!-- 资金费率 -->
+<div class="section-title" style="margin-top: 16px;">💰 资金费率</div>
+<div class="card" id="fundingCard">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <span style="font-size:13px;">累计资金费: <span id="totalFunding" style="font-weight:700;">--</span> USDT</span>
+  </div>
+  <div style="max-height:200px;overflow-y:auto;">
+    <table class="pos-table"><thead><tr>
+      <th>时间</th><th>币种</th><th>方向</th><th>费率</th><th>支出(USDT)</th>
+    </tr></thead><tbody id="fundingBody"></tbody></table>
+  </div>
+</div>
+
 <!-- 日志 -->
 <div class="section-title" style="margin-top: 16px;">📝 运行日志</div>
 <div class="tabs" id="logTabs">
@@ -399,6 +422,65 @@ async function loadMarketAnalysis() {
   el.innerHTML = html;
 }
 
+// 加载交易明细（含滑点）
+async function loadTrades() {
+  const data = await fetchJSON('/api/trades?limit=30');
+  const tbody = document.getElementById('tradeBody');
+  if (!data.records || data.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:12px;">暂无交易记录</td></tr>';
+    return;
+  }
+  const sideLabel = { 'LONG': '🟢 多', 'SHORT': '🔴 空' };
+  const reasonMap = { 'open': '开仓', 'fast_sl': '快捞止损', 'fast_tp_lock': '快捞锁仓' };
+  const entryModeLabel = { 'trend': '趋势', 'volatility_override': '波动覆盖', 'sideways': '横盘' };
+  tbody.innerHTML = data.records.map(r => {
+    const pnl = Number(r.realized_pnl || 0);
+    const fee = Number(r.fee || 0);
+    const slip = Number(r.slippage || 0);
+    const net = Number(r.net_pnl || 0);
+    const t = (r.time || '').slice(11, 19);
+    const side = sideLabel[r.side] || r.side;
+    const reason = reasonMap[r.reason] || r.reason;
+    const entry = entryModeLabel[r.entry_mode] || '-';
+    const entryColor = r.entry_mode === 'volatility_override' ? 'color:var(--orange);' : 'color:var(--muted);';
+    return `<tr>
+      <td style="color:var(--muted);font-size:12px;">${t}</td>
+      <td><b>${r.symbol}</b></td>
+      <td>${side}</td>
+      <td style="font-size:11px;${entryColor}">${entry}</td>
+      <td style="font-size:12px;color:var(--muted);">${reason}</td>
+      <td class="${pnlClass(pnl)}">${pnl > 0 ? '+' : ''}${fmt(pnl)}</td>
+      <td style="color:var(--muted);">${fmt(fee, 4)}</td>
+      <td style="color:var(--orange);">${slip > 0 ? fmt(slip, 4) : '-'}</td>
+      <td class="${pnlClass(net)}">${net > 0 ? '+' : ''}${fmt(net)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// 加载资金费率
+async function loadFunding() {
+  const data = await fetchJSON('/api/funding');
+  const tbody = document.getElementById('fundingBody');
+  document.getElementById('totalFunding').textContent = fmt(data.total_payment || 0);
+  if (!data.records || data.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:12px;">暂无资金费率记录</td></tr>';
+    return;
+  }
+  const sideDot = { 'LONG': '🟢', 'SHORT': '🔴' };
+  tbody.innerHTML = data.records.map(r => {
+    const t = (r.time || '').slice(11, 19);
+    const payment = Number(r.payment || 0);
+    const rate = Number(r.funding_rate || 0);
+    return `<tr>
+      <td style="color:var(--muted);font-size:12px;">${t}</td>
+      <td><b>${r.symbol}</b></td>
+      <td>${sideDot[r.side] || ''} ${r.side}</td>
+      <td style="font-size:12px;">${(rate * 100).toFixed(4)}%</td>
+      <td class="${pnlClass(payment)}">${payment > 0 ? '+' : ''}${fmt(payment, 4)}</td>
+    </tr>`;
+  }).join('');
+}
+
 // ==================== 事件绑定 ====================
 document.getElementById('periodTabs').addEventListener('click', e => {
   const tab = e.target.closest('.tab');
@@ -423,6 +505,8 @@ function refreshAll() {
   loadPosition();
   loadOverview();
   loadMarketAnalysis();
+  loadTrades();
+  loadFunding();
   loadPeriodStats(document.querySelector('#periodTabs .tab.active')?.dataset?.period || '1h');
   loadLogs(parseInt(document.querySelector('#logTabs .tab.active')?.dataset?.log || '200'));
 }

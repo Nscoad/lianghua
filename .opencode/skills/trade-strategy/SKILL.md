@@ -5,7 +5,7 @@ description: 当用户要求"快捞参数""快捞策略""快捞止盈止损""冷
 
 # 交易策略层 — 快捞策略（唯一策略）
 
-基于快捞策略的自动化交易执行与风险管理。监测全场 USDT 永续合约，15分钟涨跌幅>6% 触发追涨杀跌，采用浮动利润锁仓策略让利润奔跑。当前系统仅支持快捞策略，无传统主仓策略。
+基于快捞策略的自动化交易执行与风险管理。监测全场 USDT 永续合约，15分钟涨跌幅>7.3% 触发追涨杀跌，采用浮动利润锁仓策略让利润奔跑。当前系统仅支持快捞策略，无传统主仓策略。
 
 ## 适用场景
 
@@ -18,7 +18,7 @@ description: 当用户要求"快捞参数""快捞策略""快捞止盈止损""冷
 ## 安全约定
 
 - 持仓中禁止同币种开新单
-- 止损后同币种进入冷却（`is_cooling()`）
+- 止损后同币种进入冷却（`is_cooling(symbol, want_long=None)`，趋势匹配时可提前解除）
 - 单笔大亏损（>20 USDT）冷却延长至60分钟
 - 开仓前检查 K 线趋势过滤（做多仅 up，做空仅 down）
 
@@ -27,8 +27,8 @@ description: 当用户要求"快捞参数""快捞策略""快捞止盈止损""冷
 输入：市场快照（币种价格、15分钟涨跌幅）
 
 输出：
-- 开仓结果：`{action, symbol, quantity, price, order_id}`
-- 持仓风控：止损检查 / 浮动锁仓检查 / 平仓
+- 开仓结果：`{action, symbol, quantity, price, order_id, entry_mode, slippage}`
+- 持仓风控：5秒 position_loop 止损检查 / 浮动锁仓检查 / 平仓（使用 `get_real_price()` 实盘价格）
 - 冷却状态：`{cooling: true/false, remaining_minutes}`
 
 ## 推荐命令
@@ -52,19 +52,19 @@ check_fast_position()
 
 | 函数 | 说明 |
 |------|------|
-| `try_fast_open(symbol, price, prev_price)` | 快速开多：10%余额，5x杠杆，15min涨>6%触发 + K线up趋势 |
-| `try_fast_short(symbol, price, prev_price)` | 快速做空：10%余额，5x杠杆，15min跌>6%触发 + K线down趋势 |
-| `check_fast_position()` | 检查快捞持仓风控：止损 / 浮动锁仓 / K线动态回撤平仓（含分批+减量重试）|
+| `try_fast_open(symbol, price, prev_price)` | 快速开多：10%余额，5x杠杆，15min涨>7.3%触发 + K线up趋势，记录 entry_mode 到 trade_records |
+| `try_fast_short(symbol, price, prev_price)` | 快速做空：10%余额，5x杠杆，15min跌>7.3%触发 + K线down趋势，记录 entry_mode 到 trade_records |
+| `check_fast_position()` | 检查快捞持仓风控：5秒 position_loop 止损 / 浮动锁仓 / K线动态回撤平仓（使用 `get_real_price()` 实盘价格，记录 slippage）|
 
 ## 执行流程
 
 ### 快捞监测流程（每2分钟，由 `market/monitor.py` 的 `run_fast_monitor()` 触发）
 
-1. **检查持仓风控**：调用 `check_fast_position()` 检查已有快捞仓位的止损/锁仓
-2. **扫描开仓条件**：遍历所有币种，检查 15min 涨跌幅 > 6%
-3. **K线趋势过滤**：做多仅趋势=up，做空仅趋势=down
-4. **冷却检查**：同币种是否在冷却期内
-5. **执行开仓**：调用 core/order.py 下单（10%余额，5x杠杆）
+1. **检查持仓风控**：5秒 position_loop 调用 `check_fast_position()`（使用 `get_real_price()`）检查已有快捞仓位的止损/锁仓
+2. **扫描开仓条件**：遍历所有币种，检查 15min 涨跌幅 > 7.3%
+3. **K线趋势过滤**：做多仅趋势=up，做空仅趋势=down；若5分钟振幅>9.3%则波动率覆盖可跳过趋势过滤
+4. **冷却检查**：同币种是否在冷却期内（`is_cooling(symbol, want_long)`，趋势匹配时 `_try_release_cooling()` 自动解除）
+5. **执行开仓**：调用 core/order.py 下单（10%余额，5x杠杆），记录 entry_mode 和 slippage 到 trade_records
 6. **开仓减量重试**：数量过大(-4005)时自动减10%重试，最多5次
 
 ### 持仓风控流程（每次快捞循环）
@@ -80,15 +80,15 @@ check_fast_position()
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | 监测频率 | 每2分钟 | 扫描500+USDT币种 |
-| 做多触发 | 15min涨幅>6% + K线趋势up | 对比15分钟前快照 |
-| 做空触发 | 15min跌幅>6% + K线趋势down | 对比15分钟前快照 |
+| 做多触发 | 15min涨幅>7.3% + K线趋势up | 对比15分钟前快照；5min振幅>9.3%波动率覆盖可跳过趋势 |
+| 做空触发 | 15min跌幅>7.3% + K线趋势down | 对比15分钟前快照；5min振幅>9.3%波动率覆盖可跳过趋势 |
 | 仓位比例 | 10%余额 | `FAST_MARGIN_RATIO=0.10` |
 | 杠杆倍数 | 5x | `FAST_LEVERAGE=5` |
 | 止损 | -1.5%（保证金） | 始终有效 |
 | 起始锁仓 | 盈利+10% | 锁仓线+2%（回撤到+2%平） |
 | 阶梯锁仓 | 利润<30%：固定每+5%锁+2% | 利润≥30%：K线动态回撤 |
 | 最低成交额 | ≥50万USDT | 排除流动差的币种 |
-| 冷却时间 | 止损后15分钟 | 大亏损(>20U)冷却60分钟 |
+| 冷却时间 | 止损后30分钟，趋势匹配可提前解除 | 大亏损(>20U)冷却60分钟；`_try_release_cooling()` 趋势匹配时解除 |
 | 可同时持多币种 | 是 | 币种之间互不冲突 |
 
 ## 浮动锁仓策略
@@ -115,11 +115,11 @@ check_fast_position()
 
 ## 冷却机制
 
-| 条件 | 冷却时间 |
-|------|---------|
-| 正常止损 | 15分钟 |
-| 单笔亏损 > 20 USDT | 60分钟 |
-| 到期自动清理 | 每次开仓前清理过期记录 |
+| 条件 | 冷却时间 | 提前解除 |
+|------|---------|---------|
+| 正常止损 | 30分钟（`FAST_COOLING_SEC=1800`） | `_try_release_cooling()` 趋势匹配时自动解除 |
+| 单笔亏损 > 20 USDT | 60分钟 | 同上 |
+| 到期自动清理 | 每次开仓前清理过期记录 | — |
 
 ## 质量标准
 
@@ -128,3 +128,6 @@ check_fast_position()
 - 浮动锁仓：+10%启动，每+5%盈利锁仓线+2%，≥30%用K线动态
 - 快捞仓位可同时持多个币种，互不影响
 - 开/平仓数量超限时自动减量重试
+- 开仓记录必含 entry_mode（trend/volatility_override/sideways）和 slippage 字段
+- 持仓监控用 `get_real_price()` 代替 `get_current_price()`，避免测试网深度失真
+- 持仓风控运行在5秒 position_loop 循环中
