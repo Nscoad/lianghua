@@ -75,20 +75,24 @@ def get_real_price(symbol: str = "BTCUSDT") -> float | None:
     _key = f"real_{symbol}"
     if _key in _cache and _now - _cache[_key]["t"] < 5:
         return _cache[_key]["v"]
-    try:
-        import requests as _req
-        resp = _req.get(
-            f"{MAINNET_FUTURES_URL}/fapi/v1/ticker/price?symbol={symbol}",
-            headers={"X-MBX-APIKEY": MAINNET_API_KEY, "User-Agent": "Mozilla/5.0"},
-            timeout=5,
-        )
-        if resp.status_code == 200:
-            rv = float(resp.json()["price"])
-            _cache[_key] = {"t": _now, "v": rv}
-            return rv
-        return None
-    except Exception:
-        return None
+    for attempt in range(2):
+        try:
+            import requests as _req
+            resp = _req.get(
+                f"{MAINNET_FUTURES_URL}/fapi/v1/ticker/price?symbol={symbol}",
+                headers={"X-MBX-APIKEY": MAINNET_API_KEY, "User-Agent": "Mozilla/5.0"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                rv = float(resp.json()["price"])
+                _cache[_key] = {"t": _now, "v": rv}
+                return rv
+            return None
+        except Exception:
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            return None
 
 
 def get_fills_agg(symbol: str, order_id: int, max_retries: int = 3) -> dict:
@@ -141,6 +145,7 @@ def get_fills_agg(symbol: str, order_id: int, max_retries: int = 3) -> dict:
                         total_fee += fee_amt
 
             return {
+                "order_id": order_id,
                 "qty": round(total_qty, 0),
                 "avg_price": round(total_quote / total_qty, 8) if total_qty > 0 else 0.0,
                 "commission": round(total_fee, 4),

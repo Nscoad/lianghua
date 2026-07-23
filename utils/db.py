@@ -200,12 +200,15 @@ def get_all_closed_trades() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+_BAD_RECONCILE_REASONS = ("补录", "补充", "修复补录")
+
+
 def calc_period_stats(hours: int) -> dict | None:
-    """从DB查询周期统计"""
+    """从DB查询周期统计（排除补录类重复记录）"""
     conn = _get_trade_conn()
     cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
     rows = conn.execute(
-        "SELECT * FROM trade_records WHERE time >= ? AND reason != 'open' ORDER BY id",
+        "SELECT * FROM trade_records WHERE time >= ? AND reason NOT IN ('open', '补录', '补充', '修复补录') ORDER BY id",
         (cutoff,)
     ).fetchall()
     if not rows:

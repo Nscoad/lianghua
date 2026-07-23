@@ -7,6 +7,10 @@ from binance_common.configuration import ConfigurationRestAPI
 from binance_sdk_derivatives_trading_usds_futures import DerivativesTradingUsdsFutures
 from config import get_futures_config
 
+# 连接失败计数器（用于触发代理切换）
+_CONNECTION_FAIL_COUNT = 0
+_LAST_PROXY_CHECK = 0.0
+
 _LAST_SYNC = 0
 _TIME_OFFSET = 0.0  # 本地时间与币安服务器时间差值（秒），本地慢为正
 
@@ -55,6 +59,16 @@ def _is_timestamp_error(e) -> bool:
     return "-1021" in err or "Timestamp" in err
 
 
+def _is_connection_reset(e) -> bool:
+    """判断是否为连接被远程重置 (VPN/代理不稳定导致)"""
+    err = str(e)
+    return ("10054" in err or
+            "ConnectionResetError" in err or
+            "Connection aborted" in err or
+            "连接被远程" in err or
+            "强迫关闭" in err)
+
+
 def _recover_client():
     """重新初始化客户端（时间同步后调用）"""
     global client
@@ -92,17 +106,52 @@ def _rate_limit():
     _last_api_time = time.time()
 
 
+def _try_switch_proxy():
+    """连接连续失败时，尝试切换 Clash 代理节点"""
+    global _CONNECTION_FAIL_COUNT, _LAST_PROXY_CHECK
+
+    _CONNECTION_FAIL_COUNT += 1
+    now = time.time()
+
+    # 每60秒最多检查一次代理
+    if now - _LAST_PROXY_CHECK < 60:
+        return
+    _LAST_PROXY_CHECK = now
+
+    print(f"[代理] 连接已连续失败 {_CONNECTION_FAIL_COUNT} 次，检查代理状态...")
+    try:
+        from utils.proxy_manager import auto_switch_if_needed
+        if auto_switch_if_needed(_CONNECTION_FAIL_COUNT):
+            _CONNECTION_FAIL_COUNT = 0  # 切换成功则重置计数器
+            print("[代理] 已自动切换节点，继续重试...")
+        else:
+            print("[代理] 未找到更优节点，保持当前代理")
+    except Exception as e:
+        print(f"[代理] 自动切换异常: {e}")
+
+
 def _handle_api_error(e, context: str):
     """
-    处理API错误，遇到时间戳错误时自动修复
-    返回 True=已处理重试完成, False=未处理返回None
+    处理API错误
+    - 时间戳错误(-1021): 自动同步时间 + 重建客户端
+    - 连接重置(10054): 等待1秒 + 重建客户端（VPN/代理不稳定导致）
+    返回 True=已处理可重试, None=未处理
     """
-    if not _is_timestamp_error(e):
-        print(f"{context}: {e}")
-        return None
+    if _is_timestamp_error(e):
+        print(f"[API] {context} 失败: 时间戳错误，自动恢复中...")
+        _sync_system_time()
+        time.sleep(1)
+        _recover_client()
+        return True
 
-    print(f"[API] {context} 失败: 时间戳错误，自动恢复中...")
-    _sync_system_time()
-    time.sleep(1)
-    _recover_client()
-    return True
+    if _is_connection_reset(e):
+        print(f"[API] {context} 失败: 连接被重置，重建客户端重试")
+        _try_switch_proxy()
+        time.sleep(1)
+        _recover_client()
+        return True
+
+    # 超时/DNS解析失败等网络问题
+    _try_switch_proxy()
+    print(f"{context}: {e}")
+    return None

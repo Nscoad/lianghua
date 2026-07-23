@@ -13,9 +13,18 @@ from utils.trade.stats import reconcile_trades
 FAST_MONITOR_INTERVAL = 120   # 快捞监测：2分钟
 
 
+def _start_proxy_check():
+    """后台线程：代理自动检测"""
+    try:
+        from utils.proxy_manager import start_auto_check
+        start_auto_check()
+    except Exception:
+        pass
+
+
 def run_forever():
     from scheduler.loops import (
-        summary_loop, fast_loop, position_loop, reconcile_loop,
+        summary_loop, fast_loop, position_loop, reconcile_loop, funding_loop,
     )
     from scheduler.conditions import check_prerequisites, print_status
 
@@ -25,6 +34,7 @@ def run_forever():
     print("  币安 U本位合约 自动化交易系统")
     print("  持仓监控循环:    每 5 秒（检查快捞仓位止损/锁仓）")
     print("  快捞监测循环:    每 2 分钟（监测500+币种，涨7.3%触发追涨杀跌）")
+    print("  资金费率循环:    每 10 分钟（检查资金费率流水并记录）")
     print("  定时对账循环:    每 30 分钟（扫描最近1小时补漏缺失记录）")
     print("  汇总报表循环:    每 60 秒检查（到点发送 1h/3h/6h/12h/24h 到微信）")
     print("  平仓流水:        SQLite (data/trading.db)")
@@ -114,13 +124,15 @@ def run_forever():
     threads = [
         threading.Thread(target=position_loop, daemon=True, name="Position-Monitor"),
         threading.Thread(target=fast_loop, daemon=True, name="Fast-Trade"),
+        threading.Thread(target=funding_loop, daemon=True, name="Funding-Rate"),
         threading.Thread(target=reconcile_loop, daemon=True, name="Reconcile-Trades"),
         threading.Thread(target=summary_loop, daemon=True, name="Summary-Report"),
+        threading.Thread(target=_start_proxy_check, daemon=True, name="Proxy-Checker"),
     ]
     for t in threads:
         t.start()
 
-    print("\n四个循环已启动，按 Ctrl+C 停止。\n")
+    print("\n6个循环已启动，按 Ctrl+C 停止。\n")
     time.sleep(1)
     print_status()
 

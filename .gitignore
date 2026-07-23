@@ -24,7 +24,7 @@ data/
 config.py
 .env
 *.key
-cert*.pem
+*.pem
 
 # Chrome
 chrome-debug/

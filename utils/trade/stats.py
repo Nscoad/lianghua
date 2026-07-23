@@ -15,8 +15,11 @@ def calc_6h_stats() -> dict | None:
     return db_calc_period_stats(6)
 
 
+_BAD_RECONCILE_REASONS = ("补录", "补充", "修复补录")
+
+
 def print_summary():
-    records = db_get_trades(99999)
+    records = [r for r in db_get_trades(99999) if r.get("reason") not in _BAD_RECONCILE_REASONS]
     if not records:
         print("暂无交易记录")
         return
@@ -108,6 +111,9 @@ def reconcile_trades(since: int | None = None):
         for t in items:
             if t.order_id in existing_ids:
                 continue
+            if _duplicate_by_content(t, existing):
+                existing_ids.add(t.order_id)
+                continue
             is_close = t.realized_pnl is not None and float(t.realized_pnl) != 0
             if not is_close:
                 continue
@@ -122,10 +128,10 @@ def reconcile_trades(since: int | None = None):
                 "fee": round(abs(float(t.commission)), 4),
                 "net_pnl": round(float(t.realized_pnl) - abs(float(t.commission)), 2),
                 "qty": abs(float(t.qty)),
-                "entry_price": round(float(t.price), 8),
+                "entry_price": 0.0,  # 不知道入场价，标记为 0
                 "exit_price": round(float(t.price), 8),
                 "is_partial": False,
-                "order_id": t.order_id,
+                "order_id": int(t.order_id),
             }
             insert_trade_record(record)
             existing_ids.add(t.order_id)
@@ -133,6 +139,37 @@ def reconcile_trades(since: int | None = None):
             print(f"[对账] 补录 {symbol} {trade_side} 盈亏{record['net_pnl']:+.2f}")
 
     print(f"[对账] 完成：扫描 {len(symbols)} 个币种，补录 {total_filled} 条")
+
+
+def _duplicate_by_content(t: object, existing: list[dict]) -> bool:
+    """按 (symbol, 时间窗口10秒, 价格偏差0.1%, quantity) 检测是否已存在"""
+    t_time = float(t.time) / 1000
+    t_symbol = str(t.symbol)
+    t_price = float(t.price or 0)
+    t_qty = abs(float(t.qty or 0))
+    t_pnl = float(t.realized_pnl or 0)
+    for r in existing:
+        if r.get("symbol") != t_symbol:
+            continue
+        r_time_str = r.get("time", "")
+        try:
+            r_time = datetime.fromisoformat(r_time_str).timestamp()
+        except Exception:
+            continue
+        if abs(r_time - t_time) > 10:
+            continue
+        r_price = float(r.get("exit_price", 0) or 0)
+        r_qty = float(r.get("qty", 0) or 0)
+        r_pnl = float(r.get("realized_pnl", 0) or 0)
+        if t_price == 0 and r_price == 0:
+            price_ok = True
+        elif t_price == 0 or r_price == 0:
+            price_ok = False
+        else:
+            price_ok = abs((t_price - r_price) / min(t_price, r_price)) < 0.001
+        if price_ok and abs(t_qty - r_qty) < 0.01 and abs(t_pnl - r_pnl) < 0.01:
+            return True
+    return False
 
 
 def periodic_reconcile(hours: int = 1):
@@ -175,8 +212,13 @@ def periodic_reconcile(hours: int = 1):
             continue
 
         for t in items:
+            # 去重：先按 order_id，再按内容
             if t.order_id in existing_ids:
                 continue
+            if _duplicate_by_content(t, existing):
+                existing_ids.add(t.order_id)
+                continue
+
             is_close = t.realized_pnl is not None and float(t.realized_pnl) != 0
             if not is_close:
                 continue
@@ -191,10 +233,10 @@ def periodic_reconcile(hours: int = 1):
                 "fee": round(abs(float(t.commission)), 4),
                 "net_pnl": round(float(t.realized_pnl) - abs(float(t.commission)), 2),
                 "qty": abs(float(t.qty)),
-                "entry_price": round(float(t.price), 8),
+                "entry_price": 0.0,  # 不知道入场价，标记为 0
                 "exit_price": round(float(t.price), 8),
                 "is_partial": False,
-                "order_id": t.order_id,
+                "order_id": int(t.order_id),
             }
             insert_trade_record(record)
             existing_ids.add(t.order_id)

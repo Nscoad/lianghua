@@ -39,27 +39,34 @@ def position_loop():
     """
     print("[持仓监控] 线程已启动（每5秒检查止损/锁仓）")
     time.sleep(3)  # 启动后等3秒
-    # 资金费率每10分钟检查一次
-    _funding_last = 0.0
-    _funding_interval = 600  # 10分钟
     while True:
         try:
             check_fast_position()
         except Exception as e:
             print(f"\n[错误] 持仓监控异常: {e}")
             traceback.print_exc()
-        # 每10分钟检查一次资金费率（仅当有持仓时）
-        now = time.time()
-        if now - _funding_last >= _funding_interval:
-            try:
-                total = check_and_record_funding()
-                if total != 0:
-                    print(f"[资金费率] 本次新增资金费 {total:+.4f} USDT")
-            except Exception:
-                pass
-            _funding_last = now
         beat("position_loop", "ok")
         time.sleep(5)
+
+
+# ==================== 资金费率循环（10分钟） ====================
+
+def funding_loop():
+    """
+    每10分钟检查一次所有持仓的资金费率流水。
+    独立线程，不阻塞5秒持仓监控。
+    """
+    print("[资金费率] 线程已启动（每10分钟检查一次）")
+    time.sleep(30)  # 启动后等30秒，避开启动高峰
+    while True:
+        try:
+            total = check_and_record_funding()
+            if total != 0:
+                print(f"[资金费率] 本次新增资金费 {total:+.4f} USDT")
+        except Exception as e:
+            print(f"[资金费率] 检查异常: {e}")
+        beat("funding_loop", "ok")
+        time.sleep(600)  # 10分钟
 
 
 # ==================== 汇总报表循环（每分钟检查） ====================
