@@ -1,5 +1,5 @@
 """
-全场币种监控 — 每30分钟全市场概况+AI分析 + 每2分钟快速捞钱监测（做多/做空）
+全场币种监控 — 每30分钟全市场概况+AI分析 + 每1分钟快速捞钱监测（做多/做空）
 """
 import json
 import sqlite3
@@ -17,7 +17,7 @@ CHECK_INTERVAL = 1800         # 30分钟
 MIN_VOLUME_USDT = 1_000_000
 
 # 快捞参数
-FAST_CHECK_INTERVAL = 120    # 每2分钟检查一次
+FAST_CHECK_INTERVAL = 60     # 每1分钟检查一次
 FAST_LOOKBACK = 900          # 对比15分钟前的价格
 FAST_SURGE_THRESHOLD = 0.073  # 15分钟内涨跌幅度 >7.3% 触发
 FAST_MIN_VOLUME = 500_000    # 最低成交额
@@ -244,7 +244,7 @@ def _save_analysis(report: dict):
 
 
 def run_fast_monitor():
-    """每2分钟监测：检测快速涨幅并触发快捞"""
+    """每1分钟监测：检测快速涨幅并触发快捞"""
     check_fast_position()
 
     conn = _init_db()

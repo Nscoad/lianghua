@@ -16,10 +16,10 @@ from ai.analyzer import analyze_summary_stats
 from core.funding import check_and_record_funding
 
 
-# ==================== 快捞循环（2分钟） ====================
+# ==================== 快捞循环（1分钟） ====================
 
 def fast_loop():
-    """每2分钟监测全场币种，涨幅>6%触发快捞"""
+    """每1分钟监测全场币种，涨幅>7.3%触发快捞"""
     while True:
         try:
             run_fast_monitor()
@@ -35,7 +35,7 @@ def fast_loop():
 def position_loop():
     """
     每5秒检查已有快捞持仓的止损/浮动锁仓。
-    与 fast_loop 分离，避免2分钟间隔导致跳空止损。
+    与 fast_loop 分离，避免1分钟间隔导致跳空止损。
     """
     print("[持仓监控] 线程已启动（每5秒检查止损/锁仓）")
     time.sleep(3)  # 启动后等3秒

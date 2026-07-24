@@ -158,6 +158,15 @@ def _migrate_log_jsonl(conn: sqlite3.Connection):
 
 def insert_trade_record(record: dict):
     conn = _get_trade_conn()
+    order_id = record.get("order_id", 0)
+    # 去重：有 order_id 且已存在时跳过
+    if order_id:
+        exists = conn.execute(
+            "SELECT 1 FROM trade_records WHERE order_id = ? AND reason != 'open' LIMIT 1",
+            (order_id,)
+        ).fetchone()
+        if exists:
+            return
     conn.execute("""
         INSERT INTO trade_records (time, symbol, side, reason, realized_pnl, fee, net_pnl, qty, entry_price, exit_price, is_partial, order_id, slippage, entry_mode)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -168,7 +177,7 @@ def insert_trade_record(record: dict):
         record.get("fee", 0), record.get("net_pnl", 0),
         record.get("qty", 0), record.get("entry_price", 0),
         record.get("exit_price", 0), 1 if record.get("is_partial") else 0,
-        record.get("order_id", 0), record.get("slippage", 0),
+        order_id, record.get("slippage", 0),
         record.get("entry_mode", ""),
     ))
     conn.commit()

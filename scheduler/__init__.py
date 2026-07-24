@@ -1,7 +1,7 @@
 """
 调度器 — 4个并行循环的启动入口
 
-  持仓监控(5秒)  快捞监控(2分钟)  汇总报表(1h/3h/6h/12h/24h)  定时对账(30分钟)
+  持仓监控(5秒)  快捞监控(1分钟)  汇总报表(1h/3h/6h/12h/24h)  定时对账(30分钟)
 """
 import time
 import threading
@@ -10,7 +10,7 @@ from utils.logger import patch_print, flush_log
 from utils.db import init_db
 from utils.trade.stats import reconcile_trades
 
-FAST_MONITOR_INTERVAL = 120   # 快捞监测：2分钟
+FAST_MONITOR_INTERVAL = 60    # 快捞监测：1分钟
 
 
 def _start_proxy_check():
@@ -33,7 +33,7 @@ def run_forever():
     print("=" * 60)
     print("  币安 U本位合约 自动化交易系统")
     print("  持仓监控循环:    每 5 秒（检查快捞仓位止损/锁仓）")
-    print("  快捞监测循环:    每 2 分钟（监测500+币种，涨7.3%触发追涨杀跌）")
+    print("  快捞监测循环:    每 1 分钟（监测500+币种，涨7.3%触发追涨杀跌）")
     print("  资金费率循环:    每 10 分钟（检查资金费率流水并记录）")
     print("  定时对账循环:    每 30 分钟（扫描最近1小时补漏缺失记录）")
     print("  汇总报表循环:    每 60 秒检查（到点发送 1h/3h/6h/12h/24h 到微信）")
